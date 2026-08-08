@@ -1,0 +1,20 @@
+# Environment & secrets
+.env
+.env.*
+*.env
+prompts.txt
+*.prompts.txt
+
+# Python bytecode & cache
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Temporary storage & generated PDFs/ZIPs
+temp_files/
+test_output/
+*.pdf
+*.zip
+*.csv
+*.xlsx

@@ -1,0 +1,323 @@
+"""FastAPI API Routes for PDF Analysis, Single Editing, Bulk Editing, Templates, and File Download."""
+
+import os
+import uuid
+import json
+from typing import Dict, Any, Optional
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException, BackgroundTasks
+from fastapi.responses import FileResponse, JSONResponse
+
+from pdf.analyzer import analyze_pdf
+from pdf.field_resolver import parse_natural_language_instruction, build_edit_plan
+from pdf.forms import edit_acroform_pdf
+from pdf.text_editor import edit_native_text_pdf
+from pdf.ocr_editor import edit_scanned_pdf
+from pdf.validator import validate_pdf_edit
+from pdf.template_manager import register_template, get_template, load_templates
+from pdf.bulk_processor import process_bulk_pdf_edits, parse_data_file
+
+router = APIRouter(prefix="/pdf", tags=["PDF Engine"])
+
+TEMP_DIR = "temp_files"
+os.makedirs(TEMP_DIR, exist_ok=True)
+
+
+def cleanup_file(path: str):
+    """Background task to remove temporary files."""
+    if os.path.exists(path):
+        try:
+            os.remove(path)
+        except Exception:
+            pass
+
+
+@router.get("/favicon.ico")
+async def favicon():
+    return JSONResponse(status_code=204, content={})
+
+
+@router.post("/analyze")
+async def api_analyze_pdf(file: UploadFile = File(...)) -> Dict[str, Any]:
+    """Analyzes uploaded PDF and returns structural breakdown."""
+    file_id = str(uuid.uuid4())
+    temp_path = os.path.join(TEMP_DIR, f"input_{file_id}.pdf")
+
+    try:
+        content = await file.read()
+        with open(temp_path, "wb") as f:
+            f.write(content)
+
+        analysis = analyze_pdf(temp_path)
+        return analysis
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"PDF analysis failed: {str(e)}")
+    finally:
+        cleanup_file(temp_path)
+
+
+@router.post("/parse-columns")
+async def api_parse_columns(file: UploadFile = File(...)) -> Dict[str, Any]:
+    """Reads headers/column names from an uploaded Excel or CSV file."""
+    ext = os.path.splitext(file.filename)[1].lower()
+    if ext not in (".csv", ".xlsx", ".xls"):
+        raise HTTPException(status_code=400, detail="Data file must be a .csv or .xlsx file.")
+
+    file_id = str(uuid.uuid4())
+    temp_path = os.path.join(TEMP_DIR, f"cols_{file_id}{ext}")
+    try:
+        content = await file.read()
+        with open(temp_path, "wb") as f:
+            f.write(content)
+
+        rows = parse_data_file(temp_path)
+        headers = list(rows[0].keys()) if rows else []
+        return {
+            "success": True,
+            "filename": file.filename,
+            "columns": headers,
+            "sample_row": rows[0] if rows else {}
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to parse data file columns: {str(e)}")
+    finally:
+        cleanup_file(temp_path)
+
+
+@router.post("/edit")
+async def api_edit_pdf(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    changes_json: Optional[str] = Form(None),
+    instruction: Optional[str] = Form(None),
+    template_id: Optional[str] = Form(None)
+) -> Dict[str, Any]:
+    """Edits requested text fields in uploaded PDF while preserving all non-target content."""
+    file_id = str(uuid.uuid4())
+    input_path = os.path.join(TEMP_DIR, f"input_{file_id}.pdf")
+    output_filename = f"edited_{file_id}.pdf"
+    output_path = os.path.join(TEMP_DIR, output_filename)
+
+    try:
+        content = await file.read()
+        with open(input_path, "wb") as f:
+            f.write(content)
+
+        # Parse requested changes
+        changes = {}
+        if changes_json:
+            try:
+                changes = json.loads(changes_json)
+            except Exception:
+                raise HTTPException(status_code=400, detail="Invalid changes_json format. Must be valid JSON object.")
+        elif instruction:
+            changes = parse_natural_language_instruction(instruction)
+
+        if not changes and not template_id:
+            raise HTTPException(status_code=400, detail="No field changes or instruction provided.")
+
+        # 1. Analyze input PDF
+        analysis = analyze_pdf(input_path)
+        pdf_mode = analysis["mode"]
+
+        # 2. Build Edit Plan
+        if template_id:
+            tpl = get_template(template_id)
+            if not tpl:
+                raise HTTPException(status_code=404, detail=f"Template '{template_id}' not found.")
+            operations = []
+            for fk, nv in changes.items():
+                if fk in tpl["fields"]:
+                    fmeta = tpl["fields"][fk]
+                    operations.append({
+                        "field": fk,
+                        "target_type": "native_text",
+                        "page": fmeta.get("page", 0),
+                        "bbox": fmeta["bbox"],
+                        "font": fmeta.get("font", "helv"),
+                        "size": fmeta.get("size", 12.0),
+                        "old_value": "",
+                        "new_value": nv,
+                        "span": {"bbox": fmeta["bbox"], "font": fmeta.get("font", "helv"), "size": fmeta.get("size", 12.0)}
+                    })
+            plan = {"success": True, "operations": operations, "mode": pdf_mode}
+        else:
+            plan = build_edit_plan(analysis, changes)
+
+        if not plan.get("success"):
+            cleanup_file(input_path)
+            return plan
+
+        operations = plan["operations"]
+
+        # 3. Perform Targeted PDF Mutation based on PDF Mode
+        if pdf_mode == "MODE_A_ACROFORM":
+            mutate_res = edit_acroform_pdf(input_path, output_path, operations)
+        elif pdf_mode == "MODE_B_NATIVE_TEXT":
+            mutate_res = edit_native_text_pdf(input_path, output_path, operations)
+        elif pdf_mode == "MODE_C_SCANNED":
+            mutate_res = edit_scanned_pdf(input_path, output_path, operations)
+        else:
+            mutate_res = edit_native_text_pdf(input_path, output_path, operations)
+
+        if not mutate_res.get("success"):
+            cleanup_file(input_path)
+            return {
+                "success": False,
+                "reason": mutate_res.get("error", "Targeted PDF mutation failed."),
+                "requires_manual_review": True
+            }
+
+        # 4. Post-Edit Validation
+        validation = validate_pdf_edit(input_path, output_path, operations)
+
+        if not validation["passed"]:
+            cleanup_file(input_path)
+            cleanup_file(output_path)
+            return {
+                "success": False,
+                "reason": f"Validation failed: {', '.join(validation['failures'])}",
+                "validation": validation,
+                "requires_manual_review": True
+            }
+
+        background_tasks.add_task(cleanup_file, input_path)
+
+        return {
+            "success": True,
+            "mode": pdf_mode,
+            "output_file": output_filename,
+            "download_url": f"/pdf/download/{output_filename}",
+            "validation": validation
+        }
+
+    except HTTPException:
+        cleanup_file(input_path)
+        raise
+    except Exception as e:
+        cleanup_file(input_path)
+        cleanup_file(output_path)
+        return {
+            "success": False,
+            "reason": f"Internal editing error: {str(e)}",
+            "requires_manual_review": True
+        }
+
+
+@router.post("/edit-bulk")
+async def api_edit_pdf_bulk(
+    background_tasks: BackgroundTasks,
+    pdf_file: UploadFile = File(...),
+    data_file: UploadFile = File(...),
+    mappings_json: Optional[str] = Form(None),
+    send_email: bool = Form(False),
+    email_column: Optional[str] = Form(None),
+    email_subject: Optional[str] = Form("Your Internship Offer Letter"),
+    email_body: Optional[str] = Form("Dear Candidate,\n\nPlease find attached your internship offer letter.\n\nBest Regards,\nHR Team"),
+    smtp_json: Optional[str] = Form(None)
+) -> Dict[str, Any]:
+    """Generates bulk PDFs for each row in uploaded Excel (.xlsx) or CSV (.csv) file and dispatches emails if enabled."""
+    bulk_id = str(uuid.uuid4())
+    pdf_temp_path = os.path.join(TEMP_DIR, f"template_{bulk_id}.pdf")
+
+    data_ext = os.path.splitext(data_file.filename)[1].lower()
+    if data_ext not in (".csv", ".xlsx", ".xls"):
+        raise HTTPException(status_code=400, detail="Data file must be a .csv or .xlsx file.")
+
+    data_temp_path = os.path.join(TEMP_DIR, f"data_{bulk_id}{data_ext}")
+    bulk_out_dir = os.path.join(TEMP_DIR, f"bulk_out_{bulk_id}")
+
+    try:
+        pdf_content = await pdf_file.read()
+        with open(pdf_temp_path, "wb") as f:
+            f.write(pdf_content)
+
+        data_content = await data_file.read()
+        with open(data_temp_path, "wb") as f:
+            f.write(data_content)
+
+        field_mappings = None
+        if mappings_json:
+            try:
+                field_mappings = json.loads(mappings_json)
+            except Exception:
+                raise HTTPException(status_code=400, detail="Invalid mappings_json format.")
+
+        smtp_config = None
+        if smtp_json:
+            try:
+                smtp_config = json.loads(smtp_json)
+            except Exception:
+                pass
+
+        res = process_bulk_pdf_edits(
+            pdf_temp_path,
+            data_temp_path,
+            bulk_out_dir,
+            field_mappings=field_mappings,
+            send_email_toggle=send_email,
+            email_column_name=email_column,
+            email_subject=email_subject or "Your Internship Offer Letter",
+            email_body=email_body or "Dear Candidate,\n\nPlease find attached your offer letter.",
+            smtp_config=smtp_config
+        )
+
+        if not res.get("success"):
+            raise HTTPException(status_code=400, detail=res.get("message", "Bulk PDF generation failed."))
+
+        zip_filename = f"bulk_{bulk_id}.zip"
+        zip_dest_path = os.path.join(TEMP_DIR, zip_filename)
+        os.rename(res["zip_path"], zip_dest_path)
+
+        background_tasks.add_task(cleanup_file, pdf_temp_path)
+        background_tasks.add_task(cleanup_file, data_temp_path)
+
+        return {
+            "success": True,
+            "zip_filename": zip_filename,
+            "download_url": f"/pdf/download-zip/{zip_filename}",
+            "total_rows": res["total_rows"],
+            "generated_count": res["generated_count"],
+            "failed_count": res["failed_count"],
+            "sent_emails_count": res.get("sent_emails_count", 0),
+            "generated_pdfs": res["generated_pdfs"],
+            "failed_rows": res["failed_rows"]
+        }
+
+    except HTTPException:
+        cleanup_file(pdf_temp_path)
+        cleanup_file(data_temp_path)
+        raise
+    except Exception as e:
+        cleanup_file(pdf_temp_path)
+        cleanup_file(data_temp_path)
+        raise HTTPException(status_code=500, detail=f"Bulk processing error: {str(e)}")
+
+
+@router.get("/download/{file_name}")
+async def api_download_pdf(file_name: str):
+    """Serves modified output PDF for download."""
+    file_path = os.path.join(TEMP_DIR, file_name)
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="File not found.")
+    return FileResponse(file_path, media_type="application/pdf", filename=file_name)
+
+
+@router.get("/download-zip/{zip_name}")
+async def api_download_zip(zip_name: str):
+    """Serves generated bulk ZIP archive for download."""
+    file_path = os.path.join(TEMP_DIR, zip_name)
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="ZIP file not found.")
+    return FileResponse(file_path, media_type="application/zip", filename=zip_name)
+
+
+@router.get("/templates")
+async def api_list_templates():
+    """Lists all registered templates."""
+    return load_templates()
+
+
+@router.post("/templates")
+async def api_register_template(template_id: str, fields: Dict[str, Any]):
+    """Registers a new PDF template configuration."""
+    return register_template(template_id, fields)

@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>High-Fidelity PDF Text-Field Editor</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+    <div class="app-container">
+        <header class="app-header">
+            <div class="brand">
+                <svg class="logo-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                    <polyline points="14 2 14 8 20 8"></polyline>
+                    <line x1="16" y1="13" x2="8" y2="13"></line>
+                    <line x1="16" y1="17" x2="8" y2="17"></line>
+                    <polyline points="10 9 9 9 8 9"></polyline>
+                </svg>
+                <div>
+                    <h1>High-Fidelity PDF Text Editor</h1>
+                    <p class="subtitle">Deterministic Single & Bulk PDF Generation Engine</p>
+                </div>
+            </div>
+
+            <!-- Mode Selector Tabs -->
+            <div class="mode-tabs">
+                <button id="tabSingle" class="tab-btn active">Single PDF Edit</button>
+                <button id="tabBulk" class="tab-btn">Bulk Excel/CSV Generation</button>
+            </div>
+        </header>
+
+        <main class="main-content">
+            <!-- Left Column: Upload & Form -->
+            <section class="panel-card upload-panel">
+                <!-- MODE 1: SINGLE PDF -->
+                <div id="modeSingleSection">
+                    <h2>1. Upload Base PDF Document</h2>
+                    <div class="drop-zone" id="dropZoneSingle">
+                        <svg class="upload-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                            <polyline points="17 8 12 3 7 8"></polyline>
+                            <line x1="12" y1="3" x2="12" y2="15"></line>
+                        </svg>
+                        <p>Drag & Drop your PDF template file here</p>
+                        <span class="or-badge">OR</span>
+                        <label class="btn btn-secondary">
+                            Browse PDF File
+                            <input type="file" id="pdfFileInput" accept="application/pdf" hidden>
+                        </label>
+                        <p id="fileInfo" class="file-name-display"></p>
+                    </div>
+
+                    <div class="analysis-section" id="analysisSection" style="display: none;">
+                        <h3>Document Analysis</h3>
+                        <div class="metrics-grid">
+                            <div class="metric-item">
+                                <span class="metric-label">PDF Mode</span>
+                                <span class="metric-value badge" id="modeBadge">Native Text</span>
+                            </div>
+                            <div class="metric-item">
+                                <span class="metric-label">Pages</span>
+                                <span class="metric-value" id="pagesCount">1</span>
+                            </div>
+                            <div class="metric-item">
+                                <span class="metric-label">Images</span>
+                                <span class="metric-value" id="imagesCount">0</span>
+                            </div>
+                            <div class="metric-item">
+                                <span class="metric-label">Vectors</span>
+                                <span class="metric-value" id="vectorsCount">0</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="changes-section" id="changesSection">
+                        <h2>2. Field Changes</h2>
+                        <div id="fieldInputsContainer">
+                            <div class="field-row">
+                                <input type="text" class="input-field key-input" placeholder="Field name (e.g. Name, Date)">
+                                <input type="text" class="input-field val-input" placeholder="New replacement value">
+                                <button class="btn-icon remove-row-btn">&times;</button>
+                            </div>
+                        </div>
+                        <button id="addFieldBtn" class="btn btn-small">+ Add Field</button>
+
+                        <div class="nl-input-group">
+                            <label for="nlInstruction">Or Natural Language Instruction:</label>
+                            <input type="text" id="nlInstruction" class="input-field" placeholder='e.g. "Change the name to Sairaj and duration to 1 Month"'>
+                        </div>
+
+                        <button id="executeEditBtn" class="btn btn-primary btn-block">Execute Targeted Edit</button>
+                    </div>
+                </div>
+
+                <!-- MODE 2: BULK EXCEL/CSV -->
+                <div id="modeBulkSection" style="display: none;">
+
+                    <!-- Step 1 Card -->
+                    <div class="step-card">
+                        <div class="step-header">
+                            <span class="step-badge">Step 1</span>
+                            <h2>Upload Base PDF Template</h2>
+                        </div>
+                        <div class="drop-zone" id="dropZoneBulkPdf">
+                            <svg class="upload-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                                <polyline points="17 8 12 3 7 8"></polyline>
+                                <line x1="12" y1="3" x2="12" y2="15"></line>
+                            </svg>
+                            <p class="drop-title">Upload base PDF offer letter template</p>
+                            <label class="btn btn-secondary mt-3">
+                                Select Template PDF
+                                <input type="file" id="bulkPdfInput" accept="application/pdf" hidden>
+                            </label>
+                            <p id="bulkPdfInfo" class="file-name-display mt-2"></p>
+                        </div>
+                    </div>
+
+                    <!-- Step 2 Card -->
+                    <div class="step-card mt-4">
+                        <div class="step-header">
+                            <span class="step-badge">Step 2</span>
+                            <h2>Upload Excel / CSV File</h2>
+                        </div>
+                        <div class="drop-zone" id="dropZoneBulkData">
+                            <svg class="upload-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                                <polyline points="14 2 14 8 20 8"></polyline>
+                            </svg>
+                            <p class="drop-title">Upload Excel (.xlsx) or CSV (.csv) containing row values</p>
+                            <label class="btn btn-secondary mt-3">
+                                Select Excel/CSV File
+                                <input type="file" id="bulkDataInput" accept=".csv,.xlsx,.xls" hidden>
+                            </label>
+                            <p id="bulkDataInfo" class="file-name-display mt-2"></p>
+                        </div>
+                    </div>
+
+                    <!-- Step 3 Card -->
+                    <div class="step-card mt-4" id="bulkMappingSection">
+                        <div class="step-header">
+                            <span class="step-badge">Step 3</span>
+                            <h2>Field-to-Excel Column Selection</h2>
+                        </div>
+                        <p class="subtitle mb-3">Target PDF text fields to replace. Replacement values are automatically pulled from your Excel/CSV columns for each row:</p>
+                        <div id="bulkMappingContainer" class="mapping-container"></div>
+                        <button id="addBulkMapBtn" class="btn btn-small mt-3">+ Add Field-to-Column Mapping</button>
+                    </div>
+
+                    <!-- Step 4 Card: Email Dispatch -->
+                    <div class="step-card mt-4" id="emailDispatchSection">
+                        <div class="toggle-row">
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="sendEmailToggle">
+                                <span class="slider round"></span>
+                            </label>
+                            <div>
+                                <strong style="font-size: 1.05rem;">Send Individual Automated Emails</strong>
+                                <p class="subtitle mt-1">Automatically email each generated offer letter PDF directly to the candidate's email address</p>
+                            </div>
+                        </div>
+
+                        <div id="emailConfigBox" style="display: none; margin-top: 1.5rem;" class="email-config-box">
+                            <div class="nl-input-group">
+                                <label for="emailColSelect" class="form-label">Select Recipient Email Column from Excel/CSV:</label>
+                                <select id="emailColSelect" class="input-field">
+                                    <option value="">-- Upload Excel/CSV File First --</option>
+                                </select>
+                            </div>
+                            <div class="nl-input-group mt-3">
+                                <label for="emailSubjectInput" class="form-label">Email Subject:</label>
+                                <input type="text" id="emailSubjectInput" class="input-field" value="Your Internship Offer Letter - Algoryx Systems">
+                            </div>
+                            <div class="nl-input-group mt-3">
+                                <label for="emailBodyInput" class="form-label">Email Message Body:</label>
+                                <textarea id="emailBodyInput" class="input-field" rows="4">Dear Candidate,
+
+Congratulations! Please find attached your official Internship Offer Letter PDF.
+
+Best Regards,
+HR Team, Algoryx Systems</textarea>
+                            </div>
+
+                            <!-- SMTP Settings Group -->
+                            <div class="smtp-credentials-box mt-4">
+                                <h3 class="smtp-title">SMTP Sender Credentials</h3>
+                                <div class="smtp-grid mt-2">
+                                    <div class="nl-input-group">
+                                        <label for="smtpSenderEmail" class="form-label">Sender Email (Your Email):</label>
+                                        <input type="email" id="smtpSenderEmail" class="input-field" placeholder="e.g. hr@company.com">
+                                    </div>
+                                    <div class="nl-input-group">
+                                        <label for="smtpSenderPassword" class="form-label">Password / App Password:</label>
+                                        <input type="password" id="smtpSenderPassword" class="input-field" placeholder="Email Password">
+                                    </div>
+                                </div>
+                                <div class="smtp-grid mt-2">
+                                    <div class="nl-input-group">
+                                        <label for="smtpHost" class="form-label">SMTP Host:</label>
+                                        <input type="text" id="smtpHost" class="input-field" value="smtp.hostinger.com">
+                                    </div>
+                                    <div class="nl-input-group">
+                                        <label for="smtpPort" class="form-label">Port:</label>
+                                        <input type="number" id="smtpPort" class="input-field" value="465">
+                                    </div>
+                                </div>
+                                <p class="subtitle smtp-hint mt-2">
+                                    <strong>Hostinger Email:</strong> Host = <code>smtp.hostinger.com</code>, Port = <code>465</code> (or 587), Password = <strong>Your regular Hostinger email password</strong>.<br>
+                                    <strong>Gmail:</strong> Host = <code>smtp.gmail.com</code>, Port = <code>587</code>, Password = 16-character Gmail App Password.
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Main Submit Action Button -->
+                    <div class="action-bar mt-5">
+                        <button id="executeBulkBtn" class="btn btn-primary btn-block btn-lg">Generate Bulk PDFs (ZIP)</button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Right Column: Status & Results -->
+            <section class="panel-card results-panel">
+                <h2>4. Validation & Output</h2>
+                
+                <div id="statusAlert" class="status-alert" style="display: none;">
+                    <div id="statusIcon"></div>
+                    <div id="statusText">Ready</div>
+                </div>
+
+                <div id="validationResults" class="validation-box" style="display: none;">
+                    <h3>Preservation Audit Report</h3>
+                    <div class="validation-checklist">
+                        <div class="check-item" id="chkImages">
+                            <span class="chk-icon">✓</span>
+                            <span>Embedded Images Preserved (Hashes Intact)</span>
+                        </div>
+                        <div class="check-item" id="chkGeometry">
+                            <span class="chk-icon">✓</span>
+                            <span>Page Dimensions & Layout Preserved</span>
+                        </div>
+                        <div class="check-item" id="chkText">
+                            <span class="chk-icon">✓</span>
+                            <span>Unrelated Text Untouched</span>
+                        </div>
+                        <div class="check-item" id="chkVisual">
+                            <span class="chk-icon">✓</span>
+                            <span>Visual Regression Passed</span>
+                        </div>
+                    </div>
+
+                    <a id="downloadBtn" href="#" target="_blank" class="btn btn-success btn-block mt-4">
+                        Download Edited PDF
+                    </a>
+                </div>
+
+                <!-- Bulk Output Box -->
+                <div id="bulkResultsBox" class="validation-box" style="display: none;">
+                    <h3>Bulk Generation Summary</h3>
+                    <p id="bulkSummaryText" class="mt-2"></p>
+                    <a id="downloadZipBtn" href="#" target="_blank" class="btn btn-success btn-block mt-4">
+                        Download All PDFs (.ZIP Archive)
+                    </a>
+                </div>
+
+                <div id="emptyState" class="empty-state">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
+                        <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                        <circle cx="8.5" cy="8.5" r="1.5"></circle>
+                        <polyline points="21 15 16 10 5 21"></polyline>
+                    </svg>
+                    <p>Upload documents to generate single or bulk custom PDFs with 100% preservation.</p>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
