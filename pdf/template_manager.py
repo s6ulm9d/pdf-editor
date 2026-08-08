@@ -8,7 +8,9 @@ import json
 import os
 from typing import Dict, Any, Optional
 
-TEMPLATE_FILE = "templates.json"
+import tempfile
+
+TEMPLATE_FILE = os.path.join(tempfile.gettempdir(), "pdf_editor_templates.json")
 
 
 def load_templates() -> Dict[str, Any]:

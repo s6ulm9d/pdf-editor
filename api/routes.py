@@ -16,9 +16,11 @@ from pdf.validator import validate_pdf_edit
 from pdf.template_manager import register_template, get_template, load_templates
 from pdf.bulk_processor import process_bulk_pdf_edits, parse_data_file
 
+import tempfile
+
 router = APIRouter(prefix="/pdf", tags=["PDF Engine"])
 
-TEMP_DIR = "temp_files"
+TEMP_DIR = os.path.join(tempfile.gettempdir(), "pdf_editor_temp")
 os.makedirs(TEMP_DIR, exist_ok=True)
 
 
