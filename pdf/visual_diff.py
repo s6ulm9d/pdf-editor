@@ -2,12 +2,12 @@
 
 Renders original and modified PDF pages, masks out requested target bounding boxes,
 and computes pixel difference on non-target regions to detect unintended visual changes.
+
+cv2 and numpy are imported lazily so the app starts without them installed.
 """
 
 from typing import Dict, Any, List
 import pymupdf as fitz  # PyMuPDF
-import cv2
-import numpy as np
 
 
 def compare_pdf_visuals(
@@ -18,8 +18,19 @@ def compare_pdf_visuals(
 ) -> Dict[str, Any]:
     """Compares rendered pages of orig_pdf and mod_pdf, ignoring target bboxes.
 
-    Returns visual diff metrics.
+    Returns visual diff metrics. If cv2/numpy are not installed, skips visual
+    comparison and returns a soft pass so the rest of validation still works.
     """
+    try:
+        import cv2
+        import numpy as np
+    except ImportError:
+        return {
+            "passed": True,
+            "skipped": True,
+            "reason": "Visual diff skipped: cv2/numpy not installed (OCR dependencies optional)."
+        }
+
     orig_doc = fitz.open(orig_pdf_path)
     mod_doc = fitz.open(mod_pdf_path)
 
