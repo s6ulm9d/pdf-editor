@@ -17,11 +17,15 @@ from pdf.template_manager import register_template, get_template, load_templates
 from pdf.bulk_processor import process_bulk_pdf_edits, parse_data_file
 
 import tempfile
+import threading
 
 router = APIRouter(prefix="/pdf", tags=["PDF Engine"])
 
 TEMP_DIR = os.path.join(tempfile.gettempdir(), "pdf_editor_temp")
 os.makedirs(TEMP_DIR, exist_ok=True)
+
+# In-memory job store for background bulk processing
+_JOBS: Dict[str, Any] = {}
 
 
 def cleanup_file(path: str):
@@ -217,7 +221,7 @@ async def api_edit_pdf_bulk(
     email_body: Optional[str] = Form("Dear Candidate,\n\nPlease find attached your internship offer letter.\n\nBest Regards,\nHR Team"),
     smtp_json: Optional[str] = Form(None)
 ) -> Dict[str, Any]:
-    """Generates bulk PDFs for each row in uploaded Excel (.xlsx) or CSV (.csv) file and dispatches emails if enabled."""
+    """Accepts bulk PDF job, saves files, starts background processing, returns job_id immediately."""
     bulk_id = str(uuid.uuid4())
     pdf_temp_path = os.path.join(TEMP_DIR, f"template_{bulk_id}.pdf")
 
@@ -228,79 +232,83 @@ async def api_edit_pdf_bulk(
     data_temp_path = os.path.join(TEMP_DIR, f"data_{bulk_id}{data_ext}")
     bulk_out_dir = os.path.join(TEMP_DIR, f"bulk_out_{bulk_id}")
 
-    try:
-        pdf_content = await pdf_file.read()
-        with open(pdf_temp_path, "wb") as f:
-            f.write(pdf_content)
+    pdf_content = await pdf_file.read()
+    with open(pdf_temp_path, "wb") as f:
+        f.write(pdf_content)
 
-        data_content = await data_file.read()
-        with open(data_temp_path, "wb") as f:
-            f.write(data_content)
+    data_content = await data_file.read()
+    with open(data_temp_path, "wb") as f:
+        f.write(data_content)
 
-        field_mappings = None
-        if mappings_json:
-            try:
-                field_mappings = json.loads(mappings_json)
-            except Exception:
-                raise HTTPException(status_code=400, detail="Invalid mappings_json format.")
+    field_mappings = None
+    if mappings_json:
+        try:
+            field_mappings = json.loads(mappings_json)
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid mappings_json format.")
 
-        smtp_config = None
-        if smtp_json:
-            try:
-                smtp_config = json.loads(smtp_json)
-            except Exception:
-                pass
+    smtp_config = None
+    if smtp_json:
+        try:
+            smtp_config = json.loads(smtp_json)
+        except Exception:
+            pass
 
-        import asyncio
-        from concurrent.futures import ThreadPoolExecutor
+    # Register job as pending
+    _JOBS[bulk_id] = {"status": "processing", "job_id": bulk_id}
 
-        loop = asyncio.get_event_loop()
-        with ThreadPoolExecutor(max_workers=1) as pool:
-            res = await loop.run_in_executor(
-                pool,
-                lambda: process_bulk_pdf_edits(
-                    pdf_temp_path,
-                    data_temp_path,
-                    bulk_out_dir,
-                    field_mappings=field_mappings,
-                    send_email_toggle=send_email,
-                    email_column_name=email_column,
-                    email_subject=email_subject or "Your Internship Offer Letter",
-                    email_body=email_body or "Dear Candidate,\n\nPlease find attached your offer letter.",
-                    smtp_config=smtp_config
-                )
+    def _run_bulk():
+        try:
+            res = process_bulk_pdf_edits(
+                pdf_temp_path,
+                data_temp_path,
+                bulk_out_dir,
+                field_mappings=field_mappings,
+                send_email_toggle=send_email,
+                email_column_name=email_column,
+                email_subject=email_subject or "Your Internship Offer Letter",
+                email_body=email_body or "Dear Candidate,\n\nPlease find attached your offer letter.",
+                smtp_config=smtp_config
             )
+            if not res.get("success"):
+                _JOBS[bulk_id] = {"status": "failed", "job_id": bulk_id, "error": res.get("message", "Bulk generation failed.")}
+                return
 
-        if not res.get("success"):
-            raise HTTPException(status_code=400, detail=res.get("message", "Bulk PDF generation failed."))
+            zip_filename = f"bulk_{bulk_id}.zip"
+            zip_dest_path = os.path.join(TEMP_DIR, zip_filename)
+            os.rename(res["zip_path"], zip_dest_path)
 
-        zip_filename = f"bulk_{bulk_id}.zip"
-        zip_dest_path = os.path.join(TEMP_DIR, zip_filename)
-        os.rename(res["zip_path"], zip_dest_path)
+            _JOBS[bulk_id] = {
+                "status": "done",
+                "job_id": bulk_id,
+                "zip_filename": zip_filename,
+                "download_url": f"/pdf/download-zip/{zip_filename}",
+                "total_rows": res["total_rows"],
+                "generated_count": res["generated_count"],
+                "failed_count": res["failed_count"],
+                "sent_emails_count": res.get("sent_emails_count", 0),
+                "generated_pdfs": res["generated_pdfs"],
+                "failed_rows": res["failed_rows"]
+            }
+        except Exception as e:
+            _JOBS[bulk_id] = {"status": "failed", "job_id": bulk_id, "error": str(e)}
+        finally:
+            cleanup_file(pdf_temp_path)
+            cleanup_file(data_temp_path)
 
-        background_tasks.add_task(cleanup_file, pdf_temp_path)
-        background_tasks.add_task(cleanup_file, data_temp_path)
+    t = threading.Thread(target=_run_bulk, daemon=True)
+    t.start()
 
-        return {
-            "success": True,
-            "zip_filename": zip_filename,
-            "download_url": f"/pdf/download-zip/{zip_filename}",
-            "total_rows": res["total_rows"],
-            "generated_count": res["generated_count"],
-            "failed_count": res["failed_count"],
-            "sent_emails_count": res.get("sent_emails_count", 0),
-            "generated_pdfs": res["generated_pdfs"],
-            "failed_rows": res["failed_rows"]
-        }
+    return {"success": True, "status": "processing", "job_id": bulk_id, "poll_url": f"/pdf/bulk-status/{bulk_id}"}
 
-    except HTTPException:
-        cleanup_file(pdf_temp_path)
-        cleanup_file(data_temp_path)
-        raise
-    except Exception as e:
-        cleanup_file(pdf_temp_path)
-        cleanup_file(data_temp_path)
-        raise HTTPException(status_code=500, detail=f"Bulk processing error: {str(e)}")
+
+@router.get("/bulk-status/{job_id}")
+async def api_bulk_status(job_id: str) -> Dict[str, Any]:
+    """Returns current status of a background bulk PDF job."""
+    job = _JOBS.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found.")
+    return job
 
 
 @router.get("/download/{file_name}")

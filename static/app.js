@@ -372,32 +372,64 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
 
-        showStatus('Generating bulk PDFs for all rows...', 'info');
+        showStatus('Submitting bulk job...', 'info');
 
         try {
             const resp = await fetch('/pdf/edit-bulk', { method: 'POST', body: formData });
             const data = await resp.json();
 
-            if (resp.ok && data.success) {
-                emptyState.style.display = 'none';
-                validationResults.style.display = 'none';
-                bulkResultsBox.style.display = 'block';
-                downloadZipBtn.href = data.download_url;
-
-                let summary = `Successfully generated <strong>${data.generated_count}</strong> of ${data.total_rows} customized PDFs!`;
-                if (sendEmailToggle.checked) {
-                    summary += `<br>Dispatched <strong>${data.sent_emails_count}</strong> individual emails to candidates!`;
-                }
-                bulkSummaryText.innerHTML = summary;
-                showStatus('Bulk PDFs generated and processed successfully!', 'success');
-            } else {
+            if (!resp.ok || !data.success) {
                 bulkResultsBox.style.display = 'none';
                 showStatus(`Bulk generation failed: ${data.detail || data.reason || 'Processing error'}`, 'danger');
+                executeBulkBtn.disabled = false;
+                return;
             }
+
+            // Job accepted — start polling for status
+            const jobId = data.job_id;
+            const pollUrl = data.poll_url;
+            showStatus('⏳ Processing PDFs in background... please wait.', 'info');
+
+            const pollInterval = setInterval(async () => {
+                try {
+                    const statusResp = await fetch(pollUrl);
+                    const statusData = await statusResp.json();
+
+                    if (statusData.status === 'done') {
+                        clearInterval(pollInterval);
+                        executeBulkBtn.disabled = false;
+                        emptyState.style.display = 'none';
+                        validationResults.style.display = 'none';
+                        bulkResultsBox.style.display = 'block';
+                        downloadZipBtn.href = statusData.download_url;
+
+                        let summary = `Successfully generated <strong>${statusData.generated_count}</strong> of ${statusData.total_rows} customized PDFs!`;
+                        if (sendEmailToggle.checked) {
+                            summary += `<br>Dispatched <strong>${statusData.sent_emails_count}</strong> individual emails to candidates!`;
+                        }
+                        bulkSummaryText.innerHTML = summary;
+                        showStatus('✅ Bulk PDFs generated and ready for download!', 'success');
+
+                    } else if (statusData.status === 'failed') {
+                        clearInterval(pollInterval);
+                        executeBulkBtn.disabled = false;
+                        bulkResultsBox.style.display = 'none';
+                        showStatus(`Bulk generation failed: ${statusData.error || 'Unknown error'}`, 'danger');
+                    }
+                    // else still 'processing' - keep polling
+                } catch (pollErr) {
+                    clearInterval(pollInterval);
+                    executeBulkBtn.disabled = false;
+                    showStatus(`Error checking job status: ${pollErr.message}`, 'danger');
+                }
+            }, 2000); // poll every 2 seconds
+
         } catch (err) {
+            executeBulkBtn.disabled = false;
             showStatus(`Error during bulk generation: ${err.message}`, 'danger');
         }
     });
+
 
     function showStatus(msg, type) {
         statusAlert.style.display = 'block';
