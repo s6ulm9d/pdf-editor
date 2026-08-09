@@ -251,17 +251,25 @@ async def api_edit_pdf_bulk(
             except Exception:
                 pass
 
-        res = process_bulk_pdf_edits(
-            pdf_temp_path,
-            data_temp_path,
-            bulk_out_dir,
-            field_mappings=field_mappings,
-            send_email_toggle=send_email,
-            email_column_name=email_column,
-            email_subject=email_subject or "Your Internship Offer Letter",
-            email_body=email_body or "Dear Candidate,\n\nPlease find attached your offer letter.",
-            smtp_config=smtp_config
-        )
+        import asyncio
+        from concurrent.futures import ThreadPoolExecutor
+
+        loop = asyncio.get_event_loop()
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            res = await loop.run_in_executor(
+                pool,
+                lambda: process_bulk_pdf_edits(
+                    pdf_temp_path,
+                    data_temp_path,
+                    bulk_out_dir,
+                    field_mappings=field_mappings,
+                    send_email_toggle=send_email,
+                    email_column_name=email_column,
+                    email_subject=email_subject or "Your Internship Offer Letter",
+                    email_body=email_body or "Dear Candidate,\n\nPlease find attached your offer letter.",
+                    smtp_config=smtp_config
+                )
+            )
 
         if not res.get("success"):
             raise HTTPException(status_code=400, detail=res.get("message", "Bulk PDF generation failed."))
