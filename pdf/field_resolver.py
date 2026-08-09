@@ -125,7 +125,7 @@ def check_bbox_overlap(
         ix0, iy0, ix1, iy1 = img_bbox
         # Check intersection
         if not (x1 <= ix0 or x0 >= ix1 or y1 <= iy0 or y0 >= iy1):
-            return True
+            True
     return False
 
 
@@ -256,24 +256,6 @@ def build_edit_plan(
                     "editing_method": "MODE_B_NATIVE_TEXT"
                 })
 
-    if ambiguous_fields:
-        return {
-            "success": False,
-            "status": "ambiguous",
-            "message": f"Multiple possible matching locations detected for field(s): {[f['field'] for f in ambiguous_fields]}",
-            "candidates": ambiguous_fields,
-            "requires_manual_review": True
-        }
-
-    if missing_fields:
-        return {
-            "success": False,
-            "status": "missing_fields",
-            "message": f"Requested field(s) not found in PDF: {missing_fields}",
-            "missing_fields": missing_fields,
-            "requires_manual_review": True
-        }
-
     if unsafe_fields:
         return {
             "success": False,
@@ -283,8 +265,18 @@ def build_edit_plan(
             "requires_manual_review": True
         }
 
+    if not operations:
+        return {
+            "success": False,
+            "status": "missing_fields",
+            "message": f"None of the requested field(s) were found in the PDF: {missing_fields}",
+            "missing_fields": missing_fields,
+            "requires_manual_review": True
+        }
+
     return {
         "success": True,
         "mode": mode,
-        "operations": operations
+        "operations": operations,
+        "missing_fields": missing_fields
     }

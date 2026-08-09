@@ -50,18 +50,20 @@ def parse_data_file(file_path: str) -> List[Dict[str, str]]:
         sheet = wb.active
         header = None
         for row in sheet.iter_rows(values_only=True):
-            if not row:
+            if not row or not any(c is not None and str(c).strip() != "" for c in row):
                 continue
+            non_empty_count = sum(1 for c in row if c is not None and str(c).strip() != "")
+            # Header is the first row with at least 2 non-empty values (skips single-cell title blocks)
             if header is None:
-                header = [str(c).strip() if c is not None else f"col_{idx}" for idx, c in enumerate(row)]
+                if non_empty_count >= 2 or len(row) == 1:
+                    header = [str(c).strip() if c is not None else f"col_{idx}" for idx, c in enumerate(row)]
             else:
                 row_dict = {}
                 for idx, cell in enumerate(row):
-                    if idx < len(header) and cell is not None:
-                        val = str(cell).strip()
-                        if val:
-                            row_dict[header[idx]] = val
-                if row_dict:
+                    if idx < len(header):
+                        val = str(cell).strip() if cell is not None else ""
+                        row_dict[header[idx]] = val
+                if any(row_dict.values()):
                     rows.append(row_dict)
         wb.close()
     else:
@@ -98,6 +100,7 @@ def process_bulk_pdf_edits(
     failed_emails_count = 0
     email_errors = []
     zip_path = os.path.join(output_dir, "bulk_edited_pdfs.zip")
+    used_filenames = set()
 
     smtp_cfg = smtp_config or {}
 
@@ -135,7 +138,6 @@ def process_bulk_pdf_edits(
             row_changes = {}
             if field_mappings:
                 for pdf_field, col_header in field_mappings.items():
-                    # Case-insensitive column lookup
                     val = _find_col_case_insensitive(row_dict, col_header)
                     if val is not None:
                         row_changes[pdf_field] = val
@@ -150,13 +152,13 @@ def process_bulk_pdf_edits(
             for key, val in row_changes.items():
                 k_lower = str(key).lower()
                 v_str = str(val)
-                if "ref" in k_lower or "id" in k_lower or "code" in k_lower or v_str.startswith("ALG-"):
+                if ("ref" in k_lower or "id" in k_lower or "code" in k_lower or v_str.startswith("ALG-")) and v_str:
                     ref_id_val = v_str
                     break
 
             if not ref_id_val:
                 for key, val in row_dict.items():
-                    if "ref" in str(key).lower() or "id" in str(key).lower() or str(val).startswith("ALG-"):
+                    if ("ref" in str(key).lower() or "id" in str(key).lower() or str(val).startswith("ALG-")) and str(val):
                         ref_id_val = str(val)
                         break
 
@@ -166,6 +168,10 @@ def process_bulk_pdf_edits(
 
             safe_basename = sanitize_filename(ref_id_val)
             out_pdf_name = f"{safe_basename}.pdf"
+            if out_pdf_name in used_filenames:
+                out_pdf_name = f"{safe_basename}_{idx}.pdf"
+            used_filenames.add(out_pdf_name)
+
             out_pdf_path = os.path.join(output_dir, out_pdf_name)
 
             # Build edit plan for this row
@@ -188,7 +194,6 @@ def process_bulk_pdf_edits(
 
                 email_status = None
                 if send_email_toggle and email_column_name:
-                    # Case-insensitive column lookup for email address
                     recipient_email = _find_col_case_insensitive(row_dict, email_column_name)
                     if recipient_email and "@" in recipient_email:
                         email_res = send_email_with_pdf_attachment(
@@ -212,7 +217,6 @@ def process_bulk_pdf_edits(
                                 "error": email_res.get("error", "Unknown SMTP error")
                             })
                     elif send_email_toggle:
-                        # Column found but no valid email value in this row
                         failed_emails_count += 1
                         email_errors.append({
                             "row": idx,
