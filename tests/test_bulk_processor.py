@@ -71,7 +71,7 @@ def test_bulk_excel_with_mappings():
         xlsx_path,
         out_dir,
         field_mappings=mappings,
-        send_email_toggle=True,
+        send_email_toggle=False,  # No SMTP creds in test env — email tested separately
         email_column_name="Candidate_Email"
     )
 
