@@ -2,17 +2,34 @@
 
 For scanned/image-only PDFs: uses PyTesseract to locate target text bounding boxes,
 validates confidence, patches the target region, and overlays replacement text.
+
+cv2, numpy, PIL, and pytesseract are imported lazily so that the app starts
+even when these optional OCR dependencies are not installed.
 """
 
 from typing import Dict, Any, List
-import fitz  # PyMuPDF
-import cv2
-import numpy as np
-from PIL import Image
-import pytesseract
+import pymupdf as fitz  # PyMuPDF
 
 
 MIN_OCR_CONFIDENCE = 70.0  # 70% threshold required for safe automated edit
+
+_OCR_AVAILABLE: bool | None = None
+
+
+def _check_ocr_deps() -> bool:
+    """Returns True if all OCR dependencies are available."""
+    global _OCR_AVAILABLE
+    if _OCR_AVAILABLE is not None:
+        return _OCR_AVAILABLE
+    try:
+        import cv2  # noqa: F401
+        import numpy  # noqa: F401
+        from PIL import Image  # noqa: F401
+        import pytesseract  # noqa: F401
+        _OCR_AVAILABLE = True
+    except ImportError:
+        _OCR_AVAILABLE = False
+    return _OCR_AVAILABLE
 
 
 def edit_scanned_pdf(
@@ -22,8 +39,24 @@ def edit_scanned_pdf(
 ) -> Dict[str, Any]:
     """Edits scanned PDF pages using OCR bounding box detection.
 
-    If OCR confidence is low or target cannot be confidently localized, refuses edit.
+    If OCR dependencies are not installed, or if OCR confidence is low /
+    target cannot be confidently localised, refuses edit.
     """
+    if not _check_ocr_deps():
+        return {
+            "success": False,
+            "error": (
+                "OCR dependencies (cv2, numpy, Pillow, pytesseract) are not installed. "
+                "This PDF appears to be scanned/image-based and cannot be edited without OCR support. "
+                "Install opencv-python-headless, numpy, Pillow, and pytesseract to enable OCR mode."
+            ),
+            "requires_manual_review": True
+        }
+
+    import cv2
+    import numpy as np
+    import pytesseract
+
     doc = fitz.open(input_pdf_path)
 
     for op in operations:

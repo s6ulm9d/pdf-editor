@@ -5,7 +5,7 @@ Categorizes PDFs into Mode A (AcroForm), Mode B (Native Text), or Mode C (Scanne
 
 from enum import Enum
 from typing import Dict, Any
-import fitz  # PyMuPDF
+import pymupdf as fitz  # PyMuPDF
 from pypdf import PdfReader
 
 

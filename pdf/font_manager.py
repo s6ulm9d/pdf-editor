@@ -5,7 +5,7 @@ and deterministic text fitting algorithms.
 """
 
 from typing import Tuple, Dict, Any, Optional
-import fitz  # PyMuPDF
+import pymupdf as fitz  # PyMuPDF
 
 
 # Mapping of common font names/families to standard PyMuPDF font identifiers

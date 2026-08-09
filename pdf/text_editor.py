@@ -6,7 +6,7 @@ spans on the exact same baseline to eliminate blank gaps without touching unrela
 """
 
 from typing import Dict, Any, List, Tuple, Optional
-import fitz  # PyMuPDF
+import pymupdf as fitz  # PyMuPDF
 from pdf.font_manager import fit_text_in_bbox, get_text_width, resolve_font_name
 from pdf.analyzer import color_int_to_rgb
 

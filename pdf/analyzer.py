@@ -6,7 +6,7 @@ text spans, font metadata, and candidate editable fields.
 
 import hashlib
 from typing import Dict, Any, List
-import fitz  # PyMuPDF
+import pymupdf as fitz  # PyMuPDF
 from pypdf import PdfReader
 from pdf.classifier import classify_pdf
 

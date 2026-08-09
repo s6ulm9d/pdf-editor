@@ -5,7 +5,7 @@ and computes pixel difference on non-target regions to detect unintended visual 
 """
 
 from typing import Dict, Any, List
-import fitz  # PyMuPDF
+import pymupdf as fitz  # PyMuPDF
 import cv2
 import numpy as np
 
