@@ -362,14 +362,13 @@ document.addEventListener('DOMContentLoaded', () => {
             const host = document.getElementById('smtpHost').value.trim();
             const port = document.getElementById('smtpPort').value.trim();
 
-            if (senderEmail && senderPass) {
-                formData.append('smtp_json', JSON.stringify({
-                    sender_email: senderEmail,
-                    sender_password: senderPass,
-                    host: host || 'smtp.gmail.com',
-                    port: parseInt(port) || 587
-                }));
-            }
+            // Always send smtp_json so backend can merge with env vars
+            formData.append('smtp_json', JSON.stringify({
+                sender_email: senderEmail,
+                sender_password: senderPass,
+                host: host || 'smtp.hostinger.com',
+                port: parseInt(port) || 587
+            }));
         }
 
         showStatus('Submitting bulk job...', 'info');
@@ -405,7 +404,18 @@ document.addEventListener('DOMContentLoaded', () => {
 
                         let summary = `Successfully generated <strong>${statusData.generated_count}</strong> of ${statusData.total_rows} customized PDFs!`;
                         if (sendEmailToggle.checked) {
-                            summary += `<br>Dispatched <strong>${statusData.sent_emails_count}</strong> individual emails to candidates!`;
+                            if (statusData.sent_emails_count > 0) {
+                                summary += `<br>✅ Dispatched <strong>${statusData.sent_emails_count}</strong> emails successfully!`;
+                            }
+                            if (statusData.failed_emails_count > 0) {
+                                summary += `<br>❌ <strong>${statusData.failed_emails_count}</strong> email(s) failed:`;
+                                (statusData.email_errors || []).forEach(e => {
+                                    summary += `<br>&nbsp;&nbsp;• Row ${e.row} (${e.recipient}): ${e.error}`;
+                                });
+                            }
+                            if (!statusData.sent_emails_count && !statusData.failed_emails_count) {
+                                summary += `<br>⚠️ No emails were sent. Check that the email column name matches your Excel/CSV header exactly.`;
+                            }
                         }
                         bulkSummaryText.innerHTML = summary;
                         showStatus('✅ Bulk PDFs generated and ready for download!', 'success');

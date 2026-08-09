@@ -24,6 +24,15 @@ def sanitize_filename(name: str) -> str:
     return clean if clean else "document"
 
 
+def _find_col_case_insensitive(row_dict: Dict[str, str], col_name: str) -> Optional[str]:
+    """Finds a column value by case-insensitive key match."""
+    col_lower = col_name.strip().lower()
+    for k, v in row_dict.items():
+        if k.strip().lower() == col_lower:
+            return v
+    return None
+
+
 def parse_data_file(file_path: str) -> List[Dict[str, str]]:
     """Parses a CSV or Excel file into a list of row dictionaries."""
     rows = []
@@ -86,9 +95,36 @@ def process_bulk_pdf_edits(
     generated_pdfs = []
     failed_rows = []
     sent_emails_count = 0
+    failed_emails_count = 0
+    email_errors = []
     zip_path = os.path.join(output_dir, "bulk_edited_pdfs.zip")
 
     smtp_cfg = smtp_config or {}
+
+    # Resolve SMTP credentials — UI fields first, then env vars as fallback
+    smtp_sender_email = smtp_cfg.get("sender_email", "").strip() or os.environ.get("SMTP_SENDER_EMAIL", "")
+    smtp_sender_password = smtp_cfg.get("sender_password", "").strip() or os.environ.get("SMTP_SENDER_PASSWORD", "")
+    smtp_host = smtp_cfg.get("host", "").strip() or os.environ.get("SMTP_HOST", "smtp.hostinger.com")
+    smtp_port = int(smtp_cfg.get("port", 0) or os.environ.get("SMTP_PORT", 587))
+
+    # Pre-flight check: if email is enabled, verify credentials exist before processing
+    if send_email_toggle:
+        if not smtp_sender_email or not smtp_sender_password:
+            return {
+                "success": False,
+                "message": (
+                    "Email dispatch is enabled but SMTP credentials are missing. "
+                    "Please fill in Sender Email and Password in the Email Dispatch section, "
+                    "or set SMTP_SENDER_EMAIL and SMTP_SENDER_PASSWORD environment variables on Railway."
+                ),
+                "generated_count": 0
+            }
+        if not email_column_name:
+            return {
+                "success": False,
+                "message": "Email dispatch is enabled but no recipient email column was selected.",
+                "generated_count": 0
+            }
 
     # Analyze base template once
     template_analysis = analyze_pdf(template_pdf_path)
@@ -99,8 +135,10 @@ def process_bulk_pdf_edits(
             row_changes = {}
             if field_mappings:
                 for pdf_field, col_header in field_mappings.items():
-                    if col_header in row_dict:
-                        row_changes[pdf_field] = row_dict[col_header]
+                    # Case-insensitive column lookup
+                    val = _find_col_case_insensitive(row_dict, col_header)
+                    if val is not None:
+                        row_changes[pdf_field] = val
             else:
                 row_changes = row_dict
 
@@ -123,7 +161,7 @@ def process_bulk_pdf_edits(
                         break
 
             if not ref_id_val:
-                name_val = row_changes.get("Naman Dwivedi") or row_changes.get("name") or row_changes.get("Name")
+                name_val = row_changes.get("name") or row_changes.get("Name") or row_changes.get("NAME")
                 ref_id_val = name_val if name_val else f"row_{idx}"
 
             safe_basename = sanitize_filename(ref_id_val)
@@ -149,22 +187,38 @@ def process_bulk_pdf_edits(
                 zipf.write(out_pdf_path, arcname=out_pdf_name)
 
                 email_status = None
-                if send_email_toggle and email_column_name and email_column_name in row_dict:
-                    recipient_email = row_dict[email_column_name].strip()
+                if send_email_toggle and email_column_name:
+                    # Case-insensitive column lookup for email address
+                    recipient_email = _find_col_case_insensitive(row_dict, email_column_name)
                     if recipient_email and "@" in recipient_email:
                         email_res = send_email_with_pdf_attachment(
                             to_email=recipient_email,
                             subject=email_subject,
                             body_text=email_body,
                             attachment_pdf_path=out_pdf_path,
-                            smtp_host=smtp_cfg.get("host", "smtp.gmail.com"),
-                            smtp_port=int(smtp_cfg.get("port", 587)),
-                            sender_email=smtp_cfg.get("sender_email", ""),
-                            sender_password=smtp_cfg.get("sender_password", "")
+                            smtp_host=smtp_host,
+                            smtp_port=smtp_port,
+                            sender_email=smtp_sender_email,
+                            sender_password=smtp_sender_password
                         )
                         email_status = email_res
                         if email_res.get("success"):
                             sent_emails_count += 1
+                        else:
+                            failed_emails_count += 1
+                            email_errors.append({
+                                "row": idx,
+                                "recipient": recipient_email,
+                                "error": email_res.get("error", "Unknown SMTP error")
+                            })
+                    elif send_email_toggle:
+                        # Column found but no valid email value in this row
+                        failed_emails_count += 1
+                        email_errors.append({
+                            "row": idx,
+                            "recipient": recipient_email or "(empty)",
+                            "error": f"No valid email found in column '{email_column_name}' for this row."
+                        })
 
                 generated_pdfs.append({
                     "row": idx,
@@ -187,6 +241,8 @@ def process_bulk_pdf_edits(
         "generated_count": len(generated_pdfs),
         "failed_count": len(failed_rows),
         "sent_emails_count": sent_emails_count,
+        "failed_emails_count": failed_emails_count,
+        "email_errors": email_errors,
         "generated_pdfs": generated_pdfs,
         "failed_rows": failed_rows
     }

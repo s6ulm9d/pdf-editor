@@ -287,6 +287,8 @@ async def api_edit_pdf_bulk(
                 "generated_count": res["generated_count"],
                 "failed_count": res["failed_count"],
                 "sent_emails_count": res.get("sent_emails_count", 0),
+                "failed_emails_count": res.get("failed_emails_count", 0),
+                "email_errors": res.get("email_errors", []),
                 "generated_pdfs": res["generated_pdfs"],
                 "failed_rows": res["failed_rows"]
             }
