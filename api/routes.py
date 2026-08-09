@@ -24,8 +24,28 @@ router = APIRouter(prefix="/pdf", tags=["PDF Engine"])
 TEMP_DIR = os.path.join(tempfile.gettempdir(), "pdf_editor_temp")
 os.makedirs(TEMP_DIR, exist_ok=True)
 
-# In-memory job store for background bulk processing
-_JOBS: Dict[str, Any] = {}
+# File-based job store — survives process restarts (in-memory dict would lose jobs on Railway restart)
+JOBS_DIR = os.path.join(tempfile.gettempdir(), "pdf_editor_jobs")
+os.makedirs(JOBS_DIR, exist_ok=True)
+
+
+def _write_job(job_id: str, data: Dict[str, Any]) -> None:
+    """Persist job state to a JSON file."""
+    job_path = os.path.join(JOBS_DIR, f"{job_id}.json")
+    with open(job_path, "w", encoding="utf-8") as f:
+        json.dump(data, f)
+
+
+def _read_job(job_id: str) -> Optional[Dict[str, Any]]:
+    """Read job state from disk. Returns None if not found."""
+    job_path = os.path.join(JOBS_DIR, f"{job_id}.json")
+    if not os.path.exists(job_path):
+        return None
+    try:
+        with open(job_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return None
 
 
 def cleanup_file(path: str):
@@ -254,8 +274,8 @@ async def api_edit_pdf_bulk(
         except Exception:
             pass
 
-    # Register job as pending
-    _JOBS[bulk_id] = {"status": "processing", "job_id": bulk_id}
+    # Register job as pending in file store
+    _write_job(bulk_id, {"status": "processing", "job_id": bulk_id})
 
     def _run_bulk():
         try:
@@ -271,14 +291,14 @@ async def api_edit_pdf_bulk(
                 smtp_config=smtp_config
             )
             if not res.get("success"):
-                _JOBS[bulk_id] = {"status": "failed", "job_id": bulk_id, "error": res.get("message", "Bulk generation failed.")}
+                _write_job(bulk_id, {"status": "failed", "job_id": bulk_id, "error": res.get("message", "Bulk generation failed.")})
                 return
 
             zip_filename = f"bulk_{bulk_id}.zip"
             zip_dest_path = os.path.join(TEMP_DIR, zip_filename)
             os.rename(res["zip_path"], zip_dest_path)
 
-            _JOBS[bulk_id] = {
+            _write_job(bulk_id, {
                 "status": "done",
                 "job_id": bulk_id,
                 "zip_filename": zip_filename,
@@ -291,9 +311,9 @@ async def api_edit_pdf_bulk(
                 "email_errors": res.get("email_errors", []),
                 "generated_pdfs": res["generated_pdfs"],
                 "failed_rows": res["failed_rows"]
-            }
+            })
         except Exception as e:
-            _JOBS[bulk_id] = {"status": "failed", "job_id": bulk_id, "error": str(e)}
+            _write_job(bulk_id, {"status": "failed", "job_id": bulk_id, "error": str(e)})
         finally:
             cleanup_file(pdf_temp_path)
             cleanup_file(data_temp_path)
@@ -306,10 +326,10 @@ async def api_edit_pdf_bulk(
 
 @router.get("/bulk-status/{job_id}")
 async def api_bulk_status(job_id: str) -> Dict[str, Any]:
-    """Returns current status of a background bulk PDF job."""
-    job = _JOBS.get(job_id)
+    """Returns current status of a background bulk PDF job (reads from file-based store)."""
+    job = _read_job(job_id)
     if not job:
-        raise HTTPException(status_code=404, detail="Job not found.")
+        raise HTTPException(status_code=404, detail="Job not found. It may have expired or the server restarted before saving it.")
     return job
 
 
