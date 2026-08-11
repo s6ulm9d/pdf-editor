@@ -11,13 +11,56 @@ from email.mime.application import MIMEApplication
 from typing import Dict, Any, Optional
 
 
+def test_smtp_connection(
+    smtp_host: str = "smtp.hostinger.com",
+    smtp_port: int = 465,
+    sender_email: str = "",
+    sender_password: str = ""
+) -> Dict[str, Any]:
+    """Tests connection and authentication to the SMTP server."""
+    if not sender_email:
+        sender_email = os.environ.get("SMTP_SENDER_EMAIL", "")
+    if not sender_password:
+        sender_password = os.environ.get("SMTP_SENDER_PASSWORD", "")
+    if not smtp_host:
+        smtp_host = os.environ.get("SMTP_HOST", "smtp.hostinger.com")
+
+    if not sender_email or not sender_password:
+        return {
+            "success": False,
+            "error": "Missing credentials. Please enter Sender Email and Password."
+        }
+
+    try:
+        if int(smtp_port) == 465:
+            server = smtplib.SMTP_SSL(smtp_host, int(smtp_port), timeout=15)
+        else:
+            server = smtplib.SMTP(smtp_host, int(smtp_port), timeout=15)
+            server.starttls()
+
+        server.login(sender_email, sender_password)
+        server.quit()
+        return {
+            "success": True,
+            "message": f"Successfully connected & authenticated to {smtp_host}:{smtp_port} as {sender_email}!"
+        }
+    except Exception as e:
+        err_msg = str(e)
+        if "535" in err_msg or "authentication failed" in err_msg.lower():
+            err_msg = f"Authentication Failed (535): Incorrect password or username for {sender_email}. Please check your email password."
+        return {
+            "success": False,
+            "error": err_msg
+        }
+
+
 def send_email_with_pdf_attachment(
     to_email: str,
     subject: str,
     body_text: str,
     attachment_pdf_path: str,
-    smtp_host: str = "smtp.gmail.com",
-    smtp_port: int = 587,
+    smtp_host: str = "smtp.hostinger.com",
+    smtp_port: int = 465,
     sender_email: str = "",
     sender_password: str = ""
 ) -> Dict[str, Any]:
@@ -27,7 +70,7 @@ def send_email_with_pdf_attachment(
     if not sender_password:
         sender_password = os.environ.get("SMTP_SENDER_PASSWORD", "")
     if not smtp_host:
-        smtp_host = os.environ.get("SMTP_HOST", "smtp.gmail.com")
+        smtp_host = os.environ.get("SMTP_HOST", "smtp.hostinger.com")
 
     if not sender_email or not sender_password:
         return {
@@ -53,9 +96,9 @@ def send_email_with_pdf_attachment(
                 msg.attach(part)
 
         if int(smtp_port) == 465:
-            server = smtplib.SMTP_SSL(smtp_host, smtp_port)
+            server = smtplib.SMTP_SSL(smtp_host, int(smtp_port), timeout=25)
         else:
-            server = smtplib.SMTP(smtp_host, smtp_port)
+            server = smtplib.SMTP(smtp_host, int(smtp_port), timeout=25)
             server.starttls()
 
         server.login(sender_email, sender_password)
@@ -64,4 +107,7 @@ def send_email_with_pdf_attachment(
 
         return {"success": True, "recipient": to_email}
     except Exception as e:
-        return {"success": False, "error": str(e), "recipient": to_email}
+        err_str = str(e)
+        if "535" in err_str or "authentication failed" in err_str.lower():
+            err_str = "Authentication Failed (535): Password rejected by SMTP server."
+        return {"success": False, "error": err_str, "recipient": to_email}

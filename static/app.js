@@ -441,6 +441,43 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
 
+    // Test SMTP Button Handler
+    const testSmtpBtn = document.getElementById('testSmtpBtn');
+    const testSmtpResult = document.getElementById('testSmtpResult');
+
+    if (testSmtpBtn) {
+        testSmtpBtn.addEventListener('click', async () => {
+            const senderEmail = document.getElementById('smtpSenderEmail').value.trim();
+            const senderPass = document.getElementById('smtpSenderPassword').value.trim();
+            const host = document.getElementById('smtpHost').value.trim();
+            const port = document.getElementById('smtpPort').value.trim();
+
+            testSmtpResult.style.color = '#e2e8f0';
+            testSmtpResult.textContent = '⏳ Testing connection...';
+
+            const formData = new FormData();
+            formData.append('sender_email', senderEmail);
+            formData.append('sender_password', senderPass);
+            formData.append('smtp_host', host || 'smtp.hostinger.com');
+            formData.append('smtp_port', port || '465');
+
+            try {
+                const resp = await fetch('/pdf/test-smtp', { method: 'POST', body: formData });
+                const data = await resp.json();
+                if (resp.ok && data.success) {
+                    testSmtpResult.style.color = '#4ade80';
+                    testSmtpResult.textContent = `✅ ${data.message}`;
+                } else {
+                    testSmtpResult.style.color = '#f87171';
+                    testSmtpResult.textContent = `❌ ${data.error || 'Connection failed'}`;
+                }
+            } catch (err) {
+                testSmtpResult.style.color = '#f87171';
+                testSmtpResult.textContent = `❌ Test error: ${err.message}`;
+            }
+        });
+    }
+
     function showStatus(msg, type) {
         statusAlert.style.display = 'block';
         statusAlert.className = `status-alert ${type}`;

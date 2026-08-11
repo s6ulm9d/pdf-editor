@@ -15,6 +15,7 @@ from pdf.ocr_editor import edit_scanned_pdf
 from pdf.validator import validate_pdf_edit
 from pdf.template_manager import register_template, get_template, load_templates
 from pdf.bulk_processor import process_bulk_pdf_edits, parse_data_file
+from pdf.email_sender import test_smtp_connection
 
 import tempfile
 import threading
@@ -361,3 +362,20 @@ async def api_list_templates():
 async def api_register_template(template_id: str, fields: Dict[str, Any]):
     """Registers a new PDF template configuration."""
     return register_template(template_id, fields)
+
+
+@router.post("/test-smtp")
+async def api_test_smtp(
+    sender_email: Optional[str] = Form(None),
+    sender_password: Optional[str] = Form(None),
+    smtp_host: Optional[str] = Form("smtp.hostinger.com"),
+    smtp_port: Optional[int] = Form(465)
+) -> Dict[str, Any]:
+    """Tests connection & authentication to an SMTP server."""
+    res = test_smtp_connection(
+        smtp_host=smtp_host or "smtp.hostinger.com",
+        smtp_port=int(smtp_port or 465),
+        sender_email=sender_email or "",
+        sender_password=sender_password or ""
+    )
+    return res
