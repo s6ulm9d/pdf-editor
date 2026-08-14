@@ -1,18 +1,22 @@
 """Automated Email Sender Module.
 
-Dispatches individual emails with attached customized PDFs via SMTP.
-Applies clean IPv4 DNS resolution to prevent '[Errno 101] Network is unreachable' on cloud hosts.
+Dispatches individual emails with attached customized PDFs via SMTP or HTTP Email API (Resend / Brevo).
+Prevents '[Errno 101] Network is unreachable' on cloud hosts (e.g. Railway) where raw SMTP ports are blocked.
 """
 
 import os
 import socket
 import smtplib
+import ssl
+import json
+import base64
+import urllib.request
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.application import MIMEApplication
 from typing import Dict, Any, Optional
 
-# Force socket getaddrinfo to prioritize AF_INET (IPv4) to prevent Errno 101 on cloud platforms
+# Prioritize AF_INET (IPv4) resolution
 _orig_getaddrinfo = socket.getaddrinfo
 
 
@@ -23,6 +27,80 @@ def _ipv4_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
 
 
 socket.getaddrinfo = _ipv4_getaddrinfo
+
+
+def _send_via_resend_api(api_key: str, from_email: str, to_email: str, subject: str, body_text: str, pdf_path: str) -> Dict[str, Any]:
+    """Dispatches email using Resend HTTP API (Port 443 HTTPS - Never blocked by cloud firewalls)."""
+    try:
+        attachments = []
+        if pdf_path and os.path.exists(pdf_path):
+            filename = os.path.basename(pdf_path)
+            with open(pdf_path, "rb") as f:
+                b64_content = base64.b64encode(f.read()).decode("utf-8")
+            attachments.append({
+                "filename": filename,
+                "content": b64_content
+            })
+
+        payload = {
+            "from": from_email or "onboarding@resend.dev",
+            "to": [to_email],
+            "subject": subject,
+            "text": body_text,
+            "attachments": attachments
+        }
+
+        req = urllib.request.Request(
+            "https://api.resend.com/emails",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            method="POST"
+        )
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            return {"success": True, "recipient": to_email, "id": data.get("id")}
+    except Exception as e:
+        return {"success": False, "error": f"Resend API Error: {str(e)}", "recipient": to_email}
+
+
+def _send_via_brevo_api(api_key: str, from_email: str, to_email: str, subject: str, body_text: str, pdf_path: str) -> Dict[str, Any]:
+    """Dispatches email using Brevo (Sendinblue) HTTP API (Port 443 HTTPS)."""
+    try:
+        attachments = []
+        if pdf_path and os.path.exists(pdf_path):
+            filename = os.path.basename(pdf_path)
+            with open(pdf_path, "rb") as f:
+                b64_content = base64.b64encode(f.read()).decode("utf-8")
+            attachments.append({
+                "name": filename,
+                "content": b64_content
+            })
+
+        payload = {
+            "sender": {"email": from_email or "hr@support.algoryx.in", "name": "HR Team"},
+            "to": [{"email": to_email}],
+            "subject": subject,
+            "textContent": body_text,
+            "attachment": attachments
+        }
+
+        req = urllib.request.Request(
+            "https://api.brevo.com/v3/smtp/email",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "api-key": api_key,
+                "Content-Type": "application/json"
+            },
+            method="POST"
+        )
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            return {"success": True, "recipient": to_email, "id": data.get("messageId")}
+    except Exception as e:
+        return {"success": False, "error": f"Brevo API Error: {str(e)}", "recipient": to_email}
 
 
 def _get_smtp_server(smtp_host: str, smtp_port: int, timeout: int = 20) -> smtplib.SMTP:
@@ -42,7 +120,7 @@ def test_smtp_connection(
     sender_email: str = "",
     sender_password: str = ""
 ) -> Dict[str, Any]:
-    """Tests connection and authentication to the SMTP server with clean IPv4 resolution."""
+    """Tests connection and authentication to the SMTP server or HTTP Mail API."""
     if not sender_email:
         sender_email = os.environ.get("SMTP_SENDER_EMAIL", "")
     if not sender_password:
@@ -56,7 +134,23 @@ def test_smtp_connection(
             "error": "Missing credentials. Please enter Sender Email and Password."
         }
 
-    # Try requested port first, fallback to alternative port if network fails
+    # Resend API Key check
+    if sender_password.startswith("re_"):
+        res = _send_via_resend_api(sender_password, sender_email, sender_email, "SMTP Test", "Test", "")
+        if res.get("success"):
+            return {"success": True, "message": f"Successfully authenticated via Resend HTTP API (Port 443) as {sender_email}!"}
+        else:
+            return {"success": False, "error": res.get("error")}
+
+    # Brevo API Key check
+    if sender_password.startswith("xkeysib-"):
+        res = _send_via_brevo_api(sender_password, sender_email, sender_email, "SMTP Test", "Test", "")
+        if res.get("success"):
+            return {"success": True, "message": f"Successfully authenticated via Brevo HTTP API (Port 443) as {sender_email}!"}
+        else:
+            return {"success": False, "error": res.get("error")}
+
+    # Standard SMTP
     ports_to_try = [int(smtp_port)]
     alt_port = 587 if int(smtp_port) == 465 else 465
     ports_to_try.append(alt_port)
@@ -78,7 +172,10 @@ def test_smtp_connection(
                     "success": False,
                     "error": f"Authentication Failed (535): Incorrect password or username for {sender_email}. Please check your email password."
                 }
-            last_error = err_msg
+            if "101" in err_msg or "unreachable" in err_msg.lower() or "111" in err_msg or "refused" in err_msg.lower():
+                last_error = f"Railway cloud firewall blocks outbound raw TCP ports 465/587. Use a Resend API Key (re_...) or Brevo API Key (xkeysib-...) for 100% HTTPS email dispatch over Port 443."
+            else:
+                last_error = err_msg
 
     return {
         "success": False,
@@ -96,7 +193,7 @@ def send_email_with_pdf_attachment(
     sender_email: str = "",
     sender_password: str = ""
 ) -> Dict[str, Any]:
-    """Sends an individual automated email with attached PDF to recipient using native IPv4 resolution."""
+    """Sends an individual automated email with attached PDF to recipient using SMTP or HTTP Mail API."""
     if not sender_email:
         sender_email = os.environ.get("SMTP_SENDER_EMAIL", "")
     if not sender_password:
@@ -111,13 +208,20 @@ def send_email_with_pdf_attachment(
             "recipient": to_email
         }
 
+    # HTTP API dispatch if API key supplied
+    if sender_password.startswith("re_"):
+        return _send_via_resend_api(sender_password, sender_email, to_email, subject, body_text, attachment_pdf_path)
+
+    if sender_password.startswith("xkeysib-"):
+        return _send_via_brevo_api(sender_password, sender_email, to_email, subject, body_text, attachment_pdf_path)
+
+    # Standard SMTP dispatch
     msg = MIMEMultipart()
     msg["From"] = sender_email
     msg["To"] = to_email
     msg["Subject"] = subject
     msg.attach(MIMEText(body_text, "plain"))
 
-    # Attach PDF if it exists
     if os.path.exists(attachment_pdf_path):
         filename = os.path.basename(attachment_pdf_path)
         with open(attachment_pdf_path, "rb") as f:
@@ -145,7 +249,10 @@ def send_email_with_pdf_attachment(
                     "error": "Authentication Failed (535): Password rejected by SMTP server.",
                     "recipient": to_email
                 }
-            last_err = err_str
+            if "101" in err_str or "unreachable" in err_str.lower():
+                last_err = "Railway cloud firewall blocks outbound raw TCP ports 465/587. Use Resend/Brevo HTTP API Key for Port 443 dispatch."
+            else:
+                last_err = err_str
 
     return {
         "success": False,
