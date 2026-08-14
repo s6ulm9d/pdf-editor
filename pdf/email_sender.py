@@ -1,37 +1,38 @@
 """Automated Email Sender Module.
 
 Dispatches individual emails with attached customized PDFs via SMTP.
-Uses IPv4-first socket resolution to prevent 'Errno 101: Network is unreachable' errors on cloud platforms.
+Applies clean IPv4 DNS resolution to prevent '[Errno 101] Network is unreachable' on cloud hosts.
 """
 
 import os
 import socket
 import smtplib
-import ssl
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.application import MIMEApplication
 from typing import Dict, Any, Optional
 
+# Force socket getaddrinfo to prioritize AF_INET (IPv4) to prevent Errno 101 on cloud platforms
+_orig_getaddrinfo = socket.getaddrinfo
 
-def _connect_smtp_ipv4(smtp_host: str, smtp_port: int, timeout: int = 15) -> smtplib.SMTP:
-    """Connects to SMTP server prioritizing IPv4 resolution to prevent Network Unreachable errors."""
-    infos = socket.getaddrinfo(smtp_host, int(smtp_port), socket.AF_INET, socket.SOCK_STREAM)
-    target_ip = infos[0][4][0] if infos else smtp_host
 
-    if int(smtp_port) == 465:
-        context = ssl.create_default_context()
-        sock = socket.create_connection((target_ip, int(smtp_port)), timeout=timeout)
-        ssock = context.wrap_socket(sock, server_hostname=smtp_host)
-        server = smtplib.SMTP_SSL(timeout=timeout)
-        server.sock = ssock
-        server.file = None
-        return server
+def _ipv4_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+    if family == 0 or family == socket.AF_UNSPEC:
+        family = socket.AF_INET
+    return _orig_getaddrinfo(host, port, family, type, proto, flags)
+
+
+socket.getaddrinfo = _ipv4_getaddrinfo
+
+
+def _get_smtp_server(smtp_host: str, smtp_port: int, timeout: int = 20) -> smtplib.SMTP:
+    """Returns an authenticated SMTP / SMTP_SSL server instance."""
+    port_num = int(smtp_port)
+    if port_num == 465:
+        return smtplib.SMTP_SSL(smtp_host, port_num, timeout=timeout)
     else:
-        server = smtplib.SMTP(target_ip, int(smtp_port), timeout=timeout)
-        server.ehlo(smtp_host)
+        server = smtplib.SMTP(smtp_host, port_num, timeout=timeout)
         server.starttls()
-        server.ehlo(smtp_host)
         return server
 
 
@@ -41,7 +42,7 @@ def test_smtp_connection(
     sender_email: str = "",
     sender_password: str = ""
 ) -> Dict[str, Any]:
-    """Tests connection and authentication to the SMTP server with IPv4 fallback."""
+    """Tests connection and authentication to the SMTP server with clean IPv4 resolution."""
     if not sender_email:
         sender_email = os.environ.get("SMTP_SENDER_EMAIL", "")
     if not sender_password:
@@ -63,7 +64,7 @@ def test_smtp_connection(
     last_error = ""
     for port in ports_to_try:
         try:
-            server = _connect_smtp_ipv4(smtp_host, port, timeout=15)
+            server = _get_smtp_server(smtp_host, port, timeout=15)
             server.login(sender_email, sender_password)
             server.quit()
             return {
@@ -95,7 +96,7 @@ def send_email_with_pdf_attachment(
     sender_email: str = "",
     sender_password: str = ""
 ) -> Dict[str, Any]:
-    """Sends an individual automated email with attached PDF to recipient using IPv4 resolution."""
+    """Sends an individual automated email with attached PDF to recipient using native IPv4 resolution."""
     if not sender_email:
         sender_email = os.environ.get("SMTP_SENDER_EMAIL", "")
     if not sender_password:
@@ -131,7 +132,7 @@ def send_email_with_pdf_attachment(
     last_err = ""
     for port in ports_to_try:
         try:
-            server = _connect_smtp_ipv4(smtp_host, port, timeout=25)
+            server = _get_smtp_server(smtp_host, port, timeout=25)
             server.login(sender_email, sender_password)
             server.send_message(msg)
             server.quit()
