@@ -248,15 +248,16 @@ def test_smtp_connection(
     """Tests connection and authentication to the SMTP server or HTTP Mail API and sends a test email."""
     load_dotenv_if_exists()
 
-    if sender_email is None:
+    if not sender_email:
         sender_email = os.environ.get("SMTP_SENDER_EMAIL", "").strip()
     else:
         sender_email = sender_email.strip()
 
-    if sender_password is None:
+    if not sender_password:
         sender_password = os.environ.get("SMTP_SENDER_PASSWORD", "").strip()
     else:
         sender_password = sender_password.strip()
+
 
     if not smtp_host:
         smtp_host = os.environ.get("SMTP_HOST", "").strip()
@@ -380,15 +381,16 @@ def send_email_with_pdf_attachment(
     """Sends an individual automated email with attached PDF to recipient using SMTP or HTTP Mail API."""
     load_dotenv_if_exists()
 
-    if sender_email is None:
+    if not sender_email:
         sender_email = os.environ.get("SMTP_SENDER_EMAIL", "").strip()
     else:
         sender_email = sender_email.strip()
 
-    if sender_password is None:
+    if not sender_password:
         sender_password = os.environ.get("SMTP_SENDER_PASSWORD", "").strip()
     else:
         sender_password = sender_password.strip()
+
 
     if not smtp_host:
         smtp_host = os.environ.get("SMTP_HOST", "smtp.hostinger.com").strip()
