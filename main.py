@@ -4,9 +4,14 @@ import os
 from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, JSONResponse
+from pdf.email_sender import load_dotenv_if_exists
+
+load_dotenv_if_exists()
+
 from api.routes import router as pdf_router
 
 app = FastAPI(
+
     title="High-Fidelity Automated PDF Text-Field Editor",
     description="Deterministic PDF text editor that preserves all non-target content, images, logos, vectors, and geometry.",
     version="1.0.0"

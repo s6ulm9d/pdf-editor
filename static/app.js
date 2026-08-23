@@ -56,6 +56,61 @@ document.addEventListener('DOMContentLoaded', () => {
         emailConfigBox.style.display = sendEmailToggle.checked ? 'block' : 'none';
     });
 
+    // Auto-fetch SMTP configuration from .env / server
+    async function loadSmtpConfig() {
+        try {
+            const resp = await fetch('/pdf/smtp-info');
+            if (resp.ok) {
+                const info = await resp.json();
+                const envBadge = document.getElementById('envConfigBadge');
+                const senderInput = document.getElementById('smtpSenderEmail');
+                const hostInput = document.getElementById('smtpHost');
+                const portInput = document.getElementById('smtpPort');
+
+                if (info.sender_email && !senderInput.value) {
+                    senderInput.value = info.sender_email;
+                }
+                if (info.host && hostInput) {
+                    hostInput.value = info.host;
+                }
+                if (info.port && portInput) {
+                    portInput.value = info.port;
+                }
+                if (info.has_credentials && envBadge) {
+                    envBadge.style.display = 'inline-block';
+                    envBadge.style.background = '#065f46';
+                    envBadge.style.color = '#34d399';
+                    envBadge.textContent = `✓ .env configured (${info.sender_email})`;
+                }
+            }
+        } catch (e) {
+            console.debug("Failed to load SMTP info", e);
+        }
+    }
+    loadSmtpConfig();
+
+    // Auto-suggest SMTP Host & Port when user types Sender Email
+    const smtpSenderEmailInput = document.getElementById('smtpSenderEmail');
+    if (smtpSenderEmailInput) {
+        smtpSenderEmailInput.addEventListener('blur', () => {
+            const val = smtpSenderEmailInput.value.trim().toLowerCase();
+            const hostInput = document.getElementById('smtpHost');
+            const portInput = document.getElementById('smtpPort');
+            if (!hostInput || !portInput) return;
+
+            if (val.endsWith('@gmail.com') && (!hostInput.value || hostInput.value === 'smtp.hostinger.com')) {
+                hostInput.value = 'smtp.gmail.com';
+                portInput.value = '587';
+            } else if ((val.endsWith('@outlook.com') || val.endsWith('@hotmail.com') || val.endsWith('@live.com')) && (!hostInput.value || hostInput.value === 'smtp.hostinger.com')) {
+                hostInput.value = 'smtp-mail.outlook.com';
+                portInput.value = '587';
+            } else if (val.endsWith('@yahoo.com') && (!hostInput.value || hostInput.value === 'smtp.hostinger.com')) {
+                hostInput.value = 'smtp.mail.yahoo.com';
+                portInput.value = '465';
+            }
+        });
+    }
+
     // Tab Switcher
     tabSingle.addEventListener('click', () => {
         tabSingle.classList.add('active');
@@ -121,7 +176,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
                 showStatus('PDF analyzed successfully.', 'success');
             } else {
-                showStatus(`Analysis failed: ${data.detail}`, 'danger');
+                showStatus(`Analysis failed: ${data.detail || data.reason || 'Unknown error'}`, 'danger');
             }
         } catch (err) {
             showStatus(`Error analyzing PDF: ${err.message}`, 'danger');
@@ -239,7 +294,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     showStatus(`Found ${availableColumns.length} columns in ${bulkDataFile.name}`, 'success');
                     renderBulkMappingRows();
                 } else {
-                    showStatus(`Failed to parse file headers: ${data.detail}`, 'danger');
+                    showStatus(`Failed to parse file headers: ${data.detail || 'Invalid format'}`, 'danger');
                 }
             } catch (err) {
                 showStatus(`Error reading columns: ${err.message}`, 'danger');
@@ -362,16 +417,16 @@ document.addEventListener('DOMContentLoaded', () => {
             const host = document.getElementById('smtpHost').value.trim();
             const port = document.getElementById('smtpPort').value.trim();
 
-            // Always send smtp_json so backend can merge with env vars
             formData.append('smtp_json', JSON.stringify({
                 sender_email: senderEmail,
                 sender_password: senderPass,
                 host: host || 'smtp.hostinger.com',
-                port: parseInt(port) || 587
+                port: parseInt(port) || 465
             }));
         }
 
-        showStatus('Submitting bulk job...', 'info');
+        executeBulkBtn.disabled = true;
+        showStatus('Submitting bulk job and running pre-flight verification...', 'info');
 
         try {
             const resp = await fetch('/pdf/edit-bulk', { method: 'POST', body: formData });
@@ -379,7 +434,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
             if (!resp.ok || !data.success) {
                 bulkResultsBox.style.display = 'none';
-                showStatus(`Bulk generation failed: ${data.detail || data.reason || 'Processing error'}`, 'danger');
+                showStatus(`Bulk submission failed: ${data.detail || data.reason || 'Processing error'}`, 'danger');
                 executeBulkBtn.disabled = false;
                 return;
             }
@@ -416,15 +471,27 @@ document.addEventListener('DOMContentLoaded', () => {
                             if (!statusData.sent_emails_count && !statusData.failed_emails_count) {
                                 summary += `<br>⚠️ No emails were sent. Check that the email column name matches your Excel/CSV header exactly.`;
                             }
+
+                            // Set clear status banner reflecting email results
+                            if (statusData.failed_emails_count > 0 && statusData.sent_emails_count === 0) {
+                                showStatus(`⚠️ Generated ${statusData.generated_count} PDFs, but ALL ${statusData.failed_emails_count} emails failed to send! See errors below.`, 'danger');
+                            } else if (statusData.failed_emails_count > 0) {
+                                showStatus(`⚠️ Generated ${statusData.generated_count} PDFs: ${statusData.sent_emails_count} emails sent, ${statusData.failed_emails_count} failed.`, 'warning');
+                            } else if (statusData.sent_emails_count > 0) {
+                                showStatus(`✅ ${statusData.generated_count} PDFs generated & ${statusData.sent_emails_count} emails dispatched successfully!`, 'success');
+                            } else {
+                                showStatus('✅ Bulk PDFs generated and ready for download!', 'success');
+                            }
+                        } else {
+                            showStatus('✅ Bulk PDFs generated and ready for download!', 'success');
                         }
                         bulkSummaryText.innerHTML = summary;
-                        showStatus('✅ Bulk PDFs generated and ready for download!', 'success');
 
                     } else if (statusData.status === 'failed') {
                         clearInterval(pollInterval);
                         executeBulkBtn.disabled = false;
                         bulkResultsBox.style.display = 'none';
-                        showStatus(`Bulk generation failed: ${statusData.error || 'Unknown error'}`, 'danger');
+                        showStatus(`❌ Bulk generation failed: ${statusData.error || 'Unknown error'}`, 'danger');
                     }
                     // else still 'processing' - keep polling
                 } catch (pollErr) {
@@ -440,7 +507,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-
     // Test SMTP Button Handler
     const testSmtpBtn = document.getElementById('testSmtpBtn');
     const testSmtpResult = document.getElementById('testSmtpResult');
@@ -453,13 +519,13 @@ document.addEventListener('DOMContentLoaded', () => {
             const port = document.getElementById('smtpPort').value.trim();
 
             testSmtpResult.style.color = '#e2e8f0';
-            testSmtpResult.textContent = '⏳ Testing connection...';
+            testSmtpResult.textContent = '⏳ Testing connection & authentication...';
 
             const formData = new FormData();
-            formData.append('sender_email', senderEmail);
-            formData.append('sender_password', senderPass);
-            formData.append('smtp_host', host || 'smtp.hostinger.com');
-            formData.append('smtp_port', port || '465');
+            if (senderEmail) formData.append('sender_email', senderEmail);
+            if (senderPass) formData.append('sender_password', senderPass);
+            if (host) formData.append('smtp_host', host);
+            if (port) formData.append('smtp_port', port);
 
             try {
                 const resp = await fetch('/pdf/test-smtp', { method: 'POST', body: formData });
@@ -469,7 +535,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     testSmtpResult.textContent = `✅ ${data.message}`;
                 } else {
                     testSmtpResult.style.color = '#f87171';
-                    testSmtpResult.textContent = `❌ ${data.error || 'Connection failed'}`;
+                    testSmtpResult.textContent = `❌ ${data.error || 'Connection/Authentication failed'}`;
                 }
             } catch (err) {
                 testSmtpResult.style.color = '#f87171';
@@ -484,3 +550,4 @@ document.addEventListener('DOMContentLoaded', () => {
         statusText.textContent = msg;
     }
 });
+

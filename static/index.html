@@ -187,15 +187,18 @@ HR Team, Algoryx Systems</textarea>
 
                             <!-- SMTP Settings Group -->
                             <div class="smtp-credentials-box mt-4">
-                                <h3 class="smtp-title">SMTP Sender Credentials</h3>
+                                <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap;">
+                                    <h3 class="smtp-title" style="margin-bottom: 0;">SMTP Sender Credentials</h3>
+                                    <span id="envConfigBadge" style="font-size: 0.8rem; padding: 2px 8px; border-radius: 4px; display: none;"></span>
+                                </div>
                                 <div class="smtp-grid mt-2">
                                     <div class="nl-input-group">
                                         <label for="smtpSenderEmail" class="form-label">Sender Email (Your Email):</label>
                                         <input type="email" id="smtpSenderEmail" class="input-field" placeholder="e.g. hr@company.com">
                                     </div>
                                     <div class="nl-input-group">
-                                        <label for="smtpSenderPassword" class="form-label">Password / App Password:</label>
-                                        <input type="password" id="smtpSenderPassword" class="input-field" placeholder="Email Password">
+                                        <label for="smtpSenderPassword" class="form-label">Password / App Password / API Key:</label>
+                                        <input type="password" id="smtpSenderPassword" class="input-field" placeholder="Email Password or API Key">
                                     </div>
                                 </div>
                                 <div class="smtp-grid mt-2">
@@ -208,13 +211,14 @@ HR Team, Algoryx Systems</textarea>
                                         <input type="number" id="smtpPort" class="input-field" value="465">
                                     </div>
                                 </div>
-                                <div class="mt-3" style="display: flex; align-items: center; gap: 1rem;">
+                                <div class="mt-3" style="display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;">
                                     <button type="button" id="testSmtpBtn" class="btn btn-secondary btn-small">⚡ Test SMTP Connection</button>
-                                    <span id="testSmtpResult" style="font-weight: 5-00; font-size: 0.95rem;"></span>
+                                    <span id="testSmtpResult" style="font-weight: 500; font-size: 0.95rem;"></span>
                                 </div>
                                 <p class="subtitle smtp-hint mt-2">
-                                    <strong>Hostinger Email:</strong> Host = <code>smtp.hostinger.com</code>, Port = <code>465</code> (or 587), Password = <strong>Your Hostinger email password</strong>.<br>
-                                    <strong>Cloud Deployment (HTTPS Port 443):</strong> Paste your <strong>Resend API Key</strong> (<code>re_...</code>) or <strong>Brevo Key</strong> (<code>xkeysib-...</code>) as Password for 100% cloud email dispatch without SMTP port blocks.
+                                    <strong>Hostinger:</strong> Host = <code>smtp.hostinger.com</code>, Port = <code>465</code> (or 587), Password = <strong>Hostinger Webmail Password</strong>.<br>
+                                    <strong>Gmail:</strong> Host = <code>smtp.gmail.com</code>, Port = <code>587</code>, Password = <strong>16-character Google App Password</strong> (not normal password).<br>
+                                    <strong>Cloud Deployment (HTTPS Port 443):</strong> Paste your <strong>Resend API Key</strong> (<code>re_...</code>), <strong>Brevo Key</strong> (<code>xkeysib-...</code>), or <strong>SendGrid Key</strong> (<code>SG...</code>) as Password for 100% cloud email dispatch without SMTP port firewall blocks.
                                 </p>
                             </div>
                         </div>

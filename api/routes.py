@@ -15,7 +15,9 @@ from pdf.ocr_editor import edit_scanned_pdf
 from pdf.validator import validate_pdf_edit
 from pdf.template_manager import register_template, get_template, load_templates
 from pdf.bulk_processor import process_bulk_pdf_edits, parse_data_file
-from pdf.email_sender import test_smtp_connection
+from pdf.email_sender import test_smtp_connection, load_dotenv_if_exists
+
+load_dotenv_if_exists()
 
 import tempfile
 import threading
@@ -61,6 +63,44 @@ def cleanup_file(path: str):
 @router.get("/favicon.ico")
 async def favicon():
     return JSONResponse(status_code=204, content={})
+
+
+@router.get("/smtp-info")
+async def api_smtp_info() -> Dict[str, Any]:
+    """Returns detected default SMTP configuration from environment or .env file."""
+    load_dotenv_if_exists()
+    sender = os.environ.get("SMTP_SENDER_EMAIL", "").strip()
+    host = os.environ.get("SMTP_HOST", "smtp.hostinger.com").strip()
+    try:
+        port = int(os.environ.get("SMTP_PORT", 0) or 465)
+    except Exception:
+        port = 465
+    has_pass = bool(os.environ.get("SMTP_SENDER_PASSWORD", "").strip())
+    return {
+        "has_credentials": bool(sender and has_pass),
+        "sender_email": sender,
+        "host": host,
+        "port": port
+    }
+
+
+@router.post("/test-smtp")
+async def api_test_smtp(
+    sender_email: Optional[str] = Form(None),
+    sender_password: Optional[str] = Form(None),
+    smtp_host: Optional[str] = Form(None),
+    smtp_port: Optional[int] = Form(None)
+) -> JSONResponse:
+    """Tests connection & authentication to an SMTP server."""
+    res = test_smtp_connection(
+        smtp_host=smtp_host or "",
+        smtp_port=int(smtp_port or 0),
+        sender_email=sender_email or "",
+        sender_password=sender_password or ""
+    )
+    status_code = 200 if res.get("success") else 400
+    return JSONResponse(status_code=status_code, content=res)
+
 
 
 @router.post("/analyze")
@@ -363,19 +403,3 @@ async def api_register_template(template_id: str, fields: Dict[str, Any]):
     """Registers a new PDF template configuration."""
     return register_template(template_id, fields)
 
-
-@router.post("/test-smtp")
-async def api_test_smtp(
-    sender_email: Optional[str] = Form(None),
-    sender_password: Optional[str] = Form(None),
-    smtp_host: Optional[str] = Form("smtp.hostinger.com"),
-    smtp_port: Optional[int] = Form(465)
-) -> Dict[str, Any]:
-    """Tests connection & authentication to an SMTP server."""
-    res = test_smtp_connection(
-        smtp_host=smtp_host or "smtp.hostinger.com",
-        smtp_port=int(smtp_port or 465),
-        sender_email=sender_email or "",
-        sender_password=sender_password or ""
-    )
-    return res

@@ -15,7 +15,7 @@ from pdf.analyzer import analyze_pdf
 from pdf.field_resolver import build_edit_plan
 from pdf.text_editor import edit_native_text_pdf
 from pdf.validator import validate_pdf_edit
-from pdf.email_sender import send_email_with_pdf_attachment
+from pdf.email_sender import send_email_with_pdf_attachment, test_smtp_connection, SMTPBatchSender, load_dotenv_if_exists
 
 
 def sanitize_filename(name: str) -> str:
@@ -84,6 +84,7 @@ def process_bulk_pdf_edits(
     smtp_config: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
     """Generates bulk PDFs for each row in the data file using optional field mappings and sends emails if enabled."""
+    load_dotenv_if_exists()
     os.makedirs(output_dir, exist_ok=True)
     data_rows = parse_data_file(data_file_path)
 
@@ -105,12 +106,19 @@ def process_bulk_pdf_edits(
     smtp_cfg = smtp_config or {}
 
     # Resolve SMTP credentials — UI fields first, then env vars as fallback
-    smtp_sender_email = smtp_cfg.get("sender_email", "").strip() or os.environ.get("SMTP_SENDER_EMAIL", "")
-    smtp_sender_password = smtp_cfg.get("sender_password", "").strip() or os.environ.get("SMTP_SENDER_PASSWORD", "")
-    smtp_host = smtp_cfg.get("host", "").strip() or os.environ.get("SMTP_HOST", "smtp.hostinger.com")
-    smtp_port = int(smtp_cfg.get("port", 0) or os.environ.get("SMTP_PORT", 587))
+    smtp_sender_email = (smtp_cfg.get("sender_email") or "").strip() or os.environ.get("SMTP_SENDER_EMAIL", "").strip()
+    smtp_sender_password = (smtp_cfg.get("sender_password") or "").strip() or os.environ.get("SMTP_SENDER_PASSWORD", "").strip()
+    smtp_host = (smtp_cfg.get("host") or "").strip() or os.environ.get("SMTP_HOST", "smtp.hostinger.com").strip()
+    
+    port_raw = smtp_cfg.get("port", 0)
+    try:
+        smtp_port = int(port_raw or os.environ.get("SMTP_PORT", 0) or 465)
+    except Exception:
+        smtp_port = 465
 
-    # Pre-flight check: if email is enabled, verify credentials exist before processing
+    batch_sender: Optional[SMTPBatchSender] = None
+
+    # Pre-flight check: if email is enabled, verify credentials and test connection BEFORE processing
     if send_email_toggle:
         if not smtp_sender_email or not smtp_sender_password:
             return {
@@ -118,7 +126,7 @@ def process_bulk_pdf_edits(
                 "message": (
                     "Email dispatch is enabled but SMTP credentials are missing. "
                     "Please fill in Sender Email and Password in the Email Dispatch section, "
-                    "or set SMTP_SENDER_EMAIL and SMTP_SENDER_PASSWORD environment variables on Railway."
+                    "or set SMTP_SENDER_EMAIL and SMTP_SENDER_PASSWORD environment variables in .env file."
                 ),
                 "generated_count": 0
             }
@@ -129,114 +137,129 @@ def process_bulk_pdf_edits(
                 "generated_count": 0
             }
 
+        # Initialize reusable batch sender & perform pre-flight connection test
+        batch_sender = SMTPBatchSender(
+            host=smtp_host,
+            port=smtp_port,
+            sender_email=smtp_sender_email,
+            sender_password=smtp_sender_password
+        )
+        preflight = batch_sender.connect()
+        if not preflight.get("success"):
+            return {
+                "success": False,
+                "message": f"Pre-flight Email Verification Failed: {preflight.get('error')}. Please verify sender credentials before generating bulk PDFs.",
+                "generated_count": 0
+            }
+
     # Analyze base template once
     template_analysis = analyze_pdf(template_pdf_path)
 
-    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
-        for idx, row_dict in enumerate(data_rows, start=1):
-            # Construct changes map using field_mappings if supplied
-            row_changes = {}
-            if field_mappings:
-                for pdf_field, col_header in field_mappings.items():
-                    val = _find_col_case_insensitive(row_dict, col_header)
-                    if val is not None:
-                        row_changes[pdf_field] = val
-            else:
-                row_changes = row_dict
+    try:
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
+            for idx, row_dict in enumerate(data_rows, start=1):
+                # Construct changes map using field_mappings if supplied
+                row_changes = {}
+                if field_mappings:
+                    for pdf_field, col_header in field_mappings.items():
+                        val = _find_col_case_insensitive(row_dict, col_header)
+                        if val is not None:
+                            row_changes[pdf_field] = val
+                else:
+                    row_changes = row_dict
 
-            if not row_changes:
-                row_changes = row_dict
+                if not row_changes:
+                    row_changes = row_dict
 
-            # Determine output PDF filename based on Ref ID or Name column
-            ref_id_val = None
-            for key, val in row_changes.items():
-                k_lower = str(key).lower()
-                v_str = str(val)
-                if ("ref" in k_lower or "id" in k_lower or "code" in k_lower or v_str.startswith("ALG-")) and v_str:
-                    ref_id_val = v_str
-                    break
-
-            if not ref_id_val:
-                for key, val in row_dict.items():
-                    if ("ref" in str(key).lower() or "id" in str(key).lower() or str(val).startswith("ALG-")) and str(val):
-                        ref_id_val = str(val)
+                # Determine output PDF filename based on Ref ID or Name column
+                ref_id_val = None
+                for key, val in row_changes.items():
+                    k_lower = str(key).lower()
+                    v_str = str(val)
+                    if ("ref" in k_lower or "id" in k_lower or "code" in k_lower or v_str.startswith("ALG-")) and v_str:
+                        ref_id_val = v_str
                         break
 
-            if not ref_id_val:
-                name_val = row_changes.get("name") or row_changes.get("Name") or row_changes.get("NAME")
-                ref_id_val = name_val if name_val else f"row_{idx}"
+                if not ref_id_val:
+                    for key, val in row_dict.items():
+                        if ("ref" in str(key).lower() or "id" in str(key).lower() or str(val).startswith("ALG-")) and str(val):
+                            ref_id_val = str(val)
+                            break
 
-            safe_basename = sanitize_filename(ref_id_val)
-            out_pdf_name = f"{safe_basename}.pdf"
-            if out_pdf_name in used_filenames:
-                out_pdf_name = f"{safe_basename}_{idx}.pdf"
-            used_filenames.add(out_pdf_name)
+                if not ref_id_val:
+                    name_val = row_changes.get("name") or row_changes.get("Name") or row_changes.get("NAME")
+                    ref_id_val = name_val if name_val else f"row_{idx}"
 
-            out_pdf_path = os.path.join(output_dir, out_pdf_name)
+                safe_basename = sanitize_filename(ref_id_val)
+                out_pdf_name = f"{safe_basename}.pdf"
+                if out_pdf_name in used_filenames:
+                    out_pdf_name = f"{safe_basename}_{idx}.pdf"
+                used_filenames.add(out_pdf_name)
 
-            # Build edit plan for this row
-            plan = build_edit_plan(template_analysis, row_changes)
+                out_pdf_path = os.path.join(output_dir, out_pdf_name)
 
-            if not plan.get("success"):
-                failed_rows.append({
-                    "row": idx,
-                    "changes": row_changes,
-                    "reason": plan.get("message", "Edit plan generation failed.")
-                })
-                continue
+                # Build edit plan for this row
+                plan = build_edit_plan(template_analysis, row_changes)
 
-            # Mutate PDF
-            edit_res = edit_native_text_pdf(template_pdf_path, out_pdf_path, plan["operations"])
+                if not plan.get("success"):
+                    failed_rows.append({
+                        "row": idx,
+                        "changes": row_changes,
+                        "reason": plan.get("message", "Edit plan generation failed.")
+                    })
+                    continue
 
-            if edit_res.get("success"):
-                val_res = validate_pdf_edit(template_pdf_path, out_pdf_path, plan["operations"])
-                zipf.write(out_pdf_path, arcname=out_pdf_name)
+                # Mutate PDF
+                edit_res = edit_native_text_pdf(template_pdf_path, out_pdf_path, plan["operations"])
 
-                email_status = None
-                if send_email_toggle and email_column_name:
-                    recipient_email = _find_col_case_insensitive(row_dict, email_column_name)
-                    if recipient_email and "@" in recipient_email:
-                        email_res = send_email_with_pdf_attachment(
-                            to_email=recipient_email,
-                            subject=email_subject,
-                            body_text=email_body,
-                            attachment_pdf_path=out_pdf_path,
-                            smtp_host=smtp_host,
-                            smtp_port=smtp_port,
-                            sender_email=smtp_sender_email,
-                            sender_password=smtp_sender_password
-                        )
-                        email_status = email_res
-                        if email_res.get("success"):
-                            sent_emails_count += 1
+                if edit_res.get("success"):
+                    val_res = validate_pdf_edit(template_pdf_path, out_pdf_path, plan["operations"])
+                    zipf.write(out_pdf_path, arcname=out_pdf_name)
+
+                    email_status = None
+                    if send_email_toggle and email_column_name and batch_sender:
+                        recipient_email = _find_col_case_insensitive(row_dict, email_column_name)
+                        if recipient_email and "@" in recipient_email:
+                            email_res = batch_sender.send_one(
+                                to_email=recipient_email,
+                                subject=email_subject,
+                                body_text=email_body,
+                                pdf_path=out_pdf_path
+                            )
+                            email_status = email_res
+                            if email_res.get("success"):
+                                sent_emails_count += 1
+                            else:
+                                failed_emails_count += 1
+                                email_errors.append({
+                                    "row": idx,
+                                    "recipient": recipient_email,
+                                    "error": email_res.get("error", "Unknown SMTP error")
+                                })
                         else:
                             failed_emails_count += 1
                             email_errors.append({
                                 "row": idx,
-                                "recipient": recipient_email,
-                                "error": email_res.get("error", "Unknown SMTP error")
+                                "recipient": recipient_email or "(empty)",
+                                "error": f"No valid email address found in column '{email_column_name}' for this row."
                             })
-                    elif send_email_toggle:
-                        failed_emails_count += 1
-                        email_errors.append({
-                            "row": idx,
-                            "recipient": recipient_email or "(empty)",
-                            "error": f"No valid email found in column '{email_column_name}' for this row."
-                        })
 
-                generated_pdfs.append({
-                    "row": idx,
-                    "filename": out_pdf_name,
-                    "filepath": out_pdf_path,
-                    "validation": val_res,
-                    "email_status": email_status
-                })
-            else:
-                failed_rows.append({
-                    "row": idx,
-                    "changes": row_changes,
-                    "reason": "PDF native text mutation failed."
-                })
+                    generated_pdfs.append({
+                        "row": idx,
+                        "filename": out_pdf_name,
+                        "filepath": out_pdf_path,
+                        "validation": val_res,
+                        "email_status": email_status
+                    })
+                else:
+                    failed_rows.append({
+                        "row": idx,
+                        "changes": row_changes,
+                        "reason": "PDF native text mutation failed."
+                    })
+    finally:
+        if batch_sender:
+            batch_sender.close()
 
     return {
         "success": len(generated_pdfs) > 0,
@@ -250,3 +273,4 @@ def process_bulk_pdf_edits(
         "generated_pdfs": generated_pdfs,
         "failed_rows": failed_rows
     }
+
