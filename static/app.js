@@ -546,10 +546,28 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
 
+    // Toggle Password Visibility Handler
+    const togglePasswordBtn = document.getElementById('togglePasswordBtn');
+    const smtpPasswordInput = document.getElementById('smtpSenderPassword');
+    const eyeIcon = document.getElementById('eyeIcon');
+    const eyeOffIcon = document.getElementById('eyeOffIcon');
+
+    if (togglePasswordBtn && smtpPasswordInput) {
+        togglePasswordBtn.addEventListener('click', () => {
+            const isPassword = smtpPasswordInput.getAttribute('type') === 'password';
+            smtpPasswordInput.setAttribute('type', isPassword ? 'text' : 'password');
+            if (eyeIcon && eyeOffIcon) {
+                eyeIcon.style.display = isPassword ? 'none' : 'block';
+                eyeOffIcon.style.display = isPassword ? 'block' : 'none';
+            }
+        });
+    }
+
     function showStatus(msg, type) {
         statusAlert.style.display = 'block';
         statusAlert.className = `status-alert ${type}`;
         statusText.textContent = msg;
     }
 });
+
 
