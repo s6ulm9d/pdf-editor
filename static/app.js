@@ -519,13 +519,14 @@ document.addEventListener('DOMContentLoaded', () => {
             const port = document.getElementById('smtpPort').value.trim();
 
             testSmtpResult.style.color = '#e2e8f0';
-            testSmtpResult.textContent = '⏳ Testing connection & authentication...';
+            testSmtpResult.textContent = '⏳ Testing connection & sending test email to test@algoryx.in...';
 
             const formData = new FormData();
             if (senderEmail) formData.append('sender_email', senderEmail);
             if (senderPass) formData.append('sender_password', senderPass);
             if (host) formData.append('smtp_host', host);
             if (port) formData.append('smtp_port', port);
+            formData.append('test_recipient', 'test@algoryx.in');
 
             try {
                 const resp = await fetch('/pdf/test-smtp', { method: 'POST', body: formData });
@@ -543,6 +544,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
     }
+
 
     function showStatus(msg, type) {
         statusAlert.style.display = 'block';

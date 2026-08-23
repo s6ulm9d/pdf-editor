@@ -89,17 +89,20 @@ async def api_test_smtp(
     sender_email: Optional[str] = Form(None),
     sender_password: Optional[str] = Form(None),
     smtp_host: Optional[str] = Form(None),
-    smtp_port: Optional[int] = Form(None)
+    smtp_port: Optional[int] = Form(None),
+    test_recipient: Optional[str] = Form("test@algoryx.in")
 ) -> JSONResponse:
-    """Tests connection & authentication to an SMTP server."""
+    """Tests connection & authentication to an SMTP server and dispatches a test email."""
     res = test_smtp_connection(
         smtp_host=smtp_host or "",
         smtp_port=int(smtp_port or 0),
         sender_email=sender_email or "",
-        sender_password=sender_password or ""
+        sender_password=sender_password or "",
+        test_recipient=test_recipient or "test@algoryx.in"
     )
     status_code = 200 if res.get("success") else 400
     return JSONResponse(status_code=status_code, content=res)
+
 
 
 

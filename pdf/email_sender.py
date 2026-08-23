@@ -242,9 +242,10 @@ def test_smtp_connection(
     smtp_host: Optional[str] = None,
     smtp_port: Optional[int] = None,
     sender_email: Optional[str] = None,
-    sender_password: Optional[str] = None
+    sender_password: Optional[str] = None,
+    test_recipient: str = "test@algoryx.in"
 ) -> Dict[str, Any]:
-    """Tests connection and authentication to the SMTP server or HTTP Mail API."""
+    """Tests connection and authentication to the SMTP server or HTTP Mail API and sends a test email."""
     load_dotenv_if_exists()
 
     if sender_email is None:
@@ -292,27 +293,29 @@ def test_smtp_connection(
             "error": "Missing credentials. Please enter Sender Email and Password, or configure .env file."
         }
 
+    target_email = test_recipient or "test@algoryx.in"
+
     # Resend API Key check
     if sender_password.startswith("re_"):
-        res = _send_via_resend_api(sender_password, sender_email, sender_email, "Antigravity SMTP Test", "Test dispatch", "")
+        res = _send_via_resend_api(sender_password, sender_email, target_email, "⚡ SMTP Test - Connection & Delivery Verified", f"This is an automated test email sent to {target_email} from PDF Editor engine.", "")
         if res.get("success"):
-            return {"success": True, "message": f"Successfully authenticated via Resend HTTP API (Port 443) as {sender_email}!"}
+            return {"success": True, "message": f"Successfully authenticated & dispatched test email to {target_email} via Resend HTTP API!"}
         else:
             return {"success": False, "error": res.get("error")}
 
     # Brevo API Key check
     if sender_password.startswith("xkeysib-"):
-        res = _send_via_brevo_api(sender_password, sender_email, sender_email, "Antigravity SMTP Test", "Test dispatch", "")
+        res = _send_via_brevo_api(sender_password, sender_email, target_email, "⚡ SMTP Test - Connection & Delivery Verified", f"This is an automated test email sent to {target_email} from PDF Editor engine.", "")
         if res.get("success"):
-            return {"success": True, "message": f"Successfully authenticated via Brevo HTTP API (Port 443) as {sender_email}!"}
+            return {"success": True, "message": f"Successfully authenticated & dispatched test email to {target_email} via Brevo HTTP API!"}
         else:
             return {"success": False, "error": res.get("error")}
 
     # SendGrid API Key check
     if sender_password.startswith("SG."):
-        res = _send_via_sendgrid_api(sender_password, sender_email, sender_email, "Antigravity SMTP Test", "Test dispatch", "")
+        res = _send_via_sendgrid_api(sender_password, sender_email, target_email, "⚡ SMTP Test - Connection & Delivery Verified", f"This is an automated test email sent to {target_email} from PDF Editor engine.", "")
         if res.get("success"):
-            return {"success": True, "message": f"Successfully authenticated via SendGrid HTTP API (Port 443) as {sender_email}!"}
+            return {"success": True, "message": f"Successfully authenticated & dispatched test email to {target_email} via SendGrid HTTP API!"}
         else:
             return {"success": False, "error": res.get("error")}
 
@@ -325,12 +328,30 @@ def test_smtp_connection(
     last_error = ""
     for port in ports_to_try:
         try:
-            server = _connect_smtp(smtp_host, port, timeout=15)
+            server = _connect_smtp(smtp_host, port, timeout=20)
             server.login(sender_email, sender_password)
+
+            # Send actual test email to target_email
+            msg = MIMEMultipart()
+            msg["From"] = sender_email
+            msg["To"] = target_email
+            msg["Subject"] = "⚡ SMTP Test Email - Connection Verified"
+            msg.attach(MIMEText(
+                f"Hello,\n\n"
+                f"This is an automated SMTP test email dispatched by the PDF Editor Engine.\n\n"
+                f"Sender: {sender_email}\n"
+                f"Recipient: {target_email}\n"
+                f"Host: {smtp_host}:{port}\n"
+                f"Status: Connection, Authentication, and Email Dispatch Succeeded!\n\n"
+                f"Best Regards,\nHR Team",
+                "plain"
+            ))
+            server.send_message(msg)
             server.quit()
+
             return {
                 "success": True,
-                "message": f"Successfully connected & authenticated to {smtp_host}:{port} as {sender_email}!"
+                "message": f"Successfully connected & sent test email to {target_email} via {smtp_host}:{port}!"
             }
         except Exception as e:
             err_msg = str(e)
@@ -338,6 +359,7 @@ def test_smtp_connection(
             if "535" in err_msg or "authentication failed" in err_msg.lower():
                 return {"success": False, "error": formatted}
             last_error = formatted
+
 
     return {
         "success": False,
