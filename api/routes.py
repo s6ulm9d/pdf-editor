@@ -16,6 +16,8 @@ from pdf.validator import validate_pdf_edit
 from pdf.template_manager import register_template, get_template, load_templates
 from pdf.bulk_processor import process_bulk_pdf_edits, parse_data_file
 from pdf.email_sender import test_smtp_connection, load_dotenv_if_exists
+from pdf.data_utils import clean_cell_value
+
 
 load_dotenv_if_exists()
 
@@ -173,17 +175,20 @@ async def api_edit_pdf(
             f.write(content)
 
         # Parse requested changes
-        changes = {}
+        raw_changes = {}
         if changes_json:
             try:
-                changes = json.loads(changes_json)
+                raw_changes = json.loads(changes_json)
             except Exception:
                 raise HTTPException(status_code=400, detail="Invalid changes_json format. Must be valid JSON object.")
         elif instruction:
-            changes = parse_natural_language_instruction(instruction)
+            raw_changes = parse_natural_language_instruction(instruction)
+
+        changes = {clean_cell_value(k): clean_cell_value(v) for k, v in raw_changes.items()} if isinstance(raw_changes, dict) else {}
 
         if not changes and not template_id:
             raise HTTPException(status_code=400, detail="No field changes or instruction provided.")
+
 
         # 1. Analyze input PDF
         analysis = analyze_pdf(input_path)

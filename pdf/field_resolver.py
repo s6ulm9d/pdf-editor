@@ -7,6 +7,8 @@ unambiguous edit plans with bounding boxes, page numbers, and font specs.
 import re
 from typing import Dict, Any, List, Optional
 from pdf.analyzer import analyze_pdf
+from pdf.data_utils import clean_cell_value
+
 
 
 def parse_natural_language_instruction(instruction: str) -> Dict[str, str]:
@@ -147,8 +149,10 @@ def build_edit_plan(
     missing_fields = []
     unsafe_fields = []
 
-    for field_key, new_val in changes.items():
+    for field_key, raw_val in changes.items():
+        new_val = clean_cell_value(raw_val)
         # Mode A: AcroForm matching
+
         if mode == "MODE_A_ACROFORM":
             matched_form = None
             for ff in form_fields:

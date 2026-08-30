@@ -92,3 +92,49 @@ def test_email_sender_missing_creds():
     )
     assert res["success"] is False
     assert "Missing SMTP sender credentials" in res["error"]
+
+
+def test_bulk_excel_datetime_timestamp_stripping():
+    import datetime
+    from pdf.data_utils import clean_cell_value
+    from pdf.analyzer import analyze_pdf
+
+    # Test clean_cell_value utility directly
+    assert clean_cell_value("2026-07-17 00:00:00") == "2026-07-17"
+    assert clean_cell_value("17-07-2026 00:00:00") == "17-07-2026"
+    assert clean_cell_value("17/07/2026 00:00:00") == "17/07/2026"
+    assert clean_cell_value("2026-07-17T00:00:00") == "2026-07-17"
+    assert clean_cell_value(datetime.datetime(2026, 7, 17, 0, 0, 0)) == "2026-07-17"
+    assert clean_cell_value(12345.0) == "12345"
+
+    # Test Excel parsing with real datetime objects
+    template_pdf = create_full_offer_letter_pdf(os.path.join(TEST_DIR, "bulk_dt_template.pdf"))
+    xlsx_path = os.path.join(TEST_DIR, "bulk_dt_data.xlsx")
+    out_dir = os.path.join(TEST_DIR, "bulk_dt_out")
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.append(["Candidate_Name", "Reference_ID", "Joining_Date", "Role_Title"])
+    # Write Python datetime object and string with 00:00:00
+    ws.append(["Manpreet Singh", "ALG-FR-0144", datetime.datetime(2026, 7, 17, 0, 0, 0), "Frontend Developer Intern"])
+    ws.append(["Rohan Gupta", "ALG-FR-0145", "2026-07-18 00:00:00", "Frontend Developer Intern"])
+    wb.save(xlsx_path)
+
+    mappings = {
+        "Naman Dwivedi": "Candidate_Name",
+        "ALG-UI-0106": "Reference_ID",
+        "15-07-2026": "Joining_Date",
+        "UI/UX Design Intern": "Role_Title"
+    }
+
+    res = process_bulk_pdf_edits(template_pdf, xlsx_path, out_dir, field_mappings=mappings)
+    assert res["success"] is True
+    assert res["generated_count"] == 2
+
+    # Verify extracted text from generated PDFs does NOT contain "00:00:00"
+    for pdf_info in res["generated_pdfs"]:
+        analysis = analyze_pdf(pdf_info["filepath"])
+        combined_text = " ".join([s["text"] for s in analysis["text_spans"]])
+        assert "00:00:00" not in combined_text
+        assert "00:00" not in combined_text
+

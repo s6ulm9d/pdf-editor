@@ -16,6 +16,7 @@ from pdf.field_resolver import build_edit_plan
 from pdf.text_editor import edit_native_text_pdf
 from pdf.validator import validate_pdf_edit
 from pdf.email_sender import send_email_with_pdf_attachment, test_smtp_connection, SMTPBatchSender, load_dotenv_if_exists
+from pdf.data_utils import clean_cell_value, clean_row_dict
 
 
 def sanitize_filename(name: str) -> str:
@@ -29,12 +30,12 @@ def _find_col_case_insensitive(row_dict: Dict[str, str], col_name: str) -> Optio
     col_lower = col_name.strip().lower()
     for k, v in row_dict.items():
         if k.strip().lower() == col_lower:
-            return v
+            return clean_cell_value(v)
     return None
 
 
 def parse_data_file(file_path: str) -> List[Dict[str, str]]:
-    """Parses a CSV or Excel file into a list of row dictionaries."""
+    """Parses a CSV or Excel file into a list of row dictionaries with pristine, timestamp-free formatting."""
     rows = []
     ext = os.path.splitext(file_path)[1].lower()
 
@@ -42,7 +43,7 @@ def parse_data_file(file_path: str) -> List[Dict[str, str]]:
         with open(file_path, "r", encoding="utf-8-sig") as f:
             reader = csv.DictReader(f)
             for r in reader:
-                clean_row = {k.strip(): str(v).strip() for k, v in r.items() if k and v is not None}
+                clean_row = clean_row_dict(r)
                 if any(clean_row.values()):
                     rows.append(clean_row)
     elif ext in (".xlsx", ".xls"):
@@ -56,12 +57,12 @@ def parse_data_file(file_path: str) -> List[Dict[str, str]]:
             # Header is the first row with at least 2 non-empty values (skips single-cell title blocks)
             if header is None:
                 if non_empty_count >= 2 or len(row) == 1:
-                    header = [str(c).strip() if c is not None else f"col_{idx}" for idx, c in enumerate(row)]
+                    header = [clean_cell_value(c) if c is not None else f"col_{idx}" for idx, c in enumerate(row)]
             else:
                 row_dict = {}
                 for idx, cell in enumerate(row):
                     if idx < len(header):
-                        val = str(cell).strip() if cell is not None else ""
+                        val = clean_cell_value(cell)
                         row_dict[header[idx]] = val
                 if any(row_dict.values()):
                     rows.append(row_dict)
@@ -70,6 +71,7 @@ def parse_data_file(file_path: str) -> List[Dict[str, str]]:
         raise ValueError(f"Unsupported data file extension: {ext}. Only .csv and .xlsx are supported.")
 
     return rows
+
 
 
 def process_bulk_pdf_edits(
